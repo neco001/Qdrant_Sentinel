@@ -184,37 +184,61 @@ class QdrantSentinel:
             pass
 
     def initial_scan(self):
-        """Scan all watched paths for changes using a thread pool."""
+        """Scan all watched paths for changes using a thread pool, skipping ignored dirs early."""
         from concurrent.futures import ThreadPoolExecutor
         
         all_files = []
+        hardcoded_ignore = {
+            '.git', '__pycache__', 'node_modules', '.venv', 'venv', 
+            '.vscode', '.idea', 'dist', 'build'
+        }
+        
         for project_path in self.watch_paths:
-            print(f"Gathering files for: {project_path}")
+            print(f"Scanning: {project_path}")
             try:
-                files = [(f, project_path) for f in project_path.rglob('*') if f.is_file()]
-                all_files.extend(files)
+                # Efficient walk that skips ignored directories
+                for root, dirs, files in os.walk(project_path):
+                    # Modify dirs in-place to skip ignored ones
+                    dirs[:] = [d for d in dirs if d not in hardcoded_ignore]
+                    
+                    for file in files:
+                        file_path = Path(root) / file
+                        all_files.append((file_path, project_path))
             except Exception as e:
                 print(f"Error scanning {project_path}: {e}")
 
         print(f"Starting parallel indexing of {len(all_files)} files...")
         with ThreadPoolExecutor(max_workers=20) as executor:
-            list(tqdm(executor.map(lambda p: self.index_file(*p), all_files), total=len(all_files)))
+            # Removed tqdm to prevent terminal flicker in background processes
+            executor.map(lambda p: self.index_file(*p), all_files)
+        print("Initial scan complete.")
 
     def start_watching(self):
         """Start real-time monitoring."""
         observer = Observer()
         handler = SentinelHandler(self)
-        for path in self.watch_paths:
-            observer.schedule(handler, str(path), recursive=True)
         
-        observer.start()
-        print(f"Sentinel is watching: {[str(p) for p in self.watch_paths]}")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            observer.stop()
-        observer.join()
+        active_watches = 0
+        for path in self.watch_paths:
+            try:
+                observer.schedule(handler, str(path), recursive=True)
+                active_watches += 1
+            except Exception as e:
+                print(f"Error: Could not watch {path}: {e}")
+        
+        if active_watches > 0:
+            try:
+                observer.start()
+                print(f"Sentinel is watching {active_watches} projects.")
+                while True:
+                    time.sleep(1)
+            except Exception as e:
+                print(f"Critical error in observer: {e}")
+            finally:
+                observer.stop()
+                observer.join()
+        else:
+            print("No valid paths to watch. Sentinel exiting.")
 
 class SentinelHandler(FileSystemEventHandler):
     def __init__(self, sentinel: QdrantSentinel):
