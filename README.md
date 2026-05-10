@@ -1,4 +1,4 @@
-# Qdrant Sentinel 🛰️
+# Qdrant Sentinel
 
 ## Do I need this? What for?
 
@@ -9,7 +9,7 @@ Manually feeding files to an LLM is tedious and slow. **Qdrant Sentinel** automa
 2.  **Indexing** every line of code into a [Qdrant](https://qdrant.tech/) vector database.
 3.  **Syncing** only what changed, so your "AI brain" always has the latest context.
 
-### 🔄 Data Flow
+### Data Flow
 ```mermaid
 graph LR
     A[Local Code] -->|Real-time Watch| B(Qdrant Sentinel)
@@ -20,7 +20,7 @@ graph LR
 
 ---
 
-## ⚡ Quick Start
+## Quick Start
 
 1. **Clone & Install**: `git clone ... && uv sync`
 2. **Configure**: Copy `.env.example` to `.env` & `projects.json.example` to `projects.json`.
@@ -28,7 +28,7 @@ graph LR
 
 ---
 
-## 🤝 Better Together (Production-Grade RAG)
+## Better Together (Production-Grade RAG)
 
 While **Qdrant Sentinel** handles the _indexing_ (getting data in), it works best when paired with the **[Qdrant Universal MCP Server](https://github.com/neco001/qdrant2.git)**.
 
@@ -47,7 +47,7 @@ Unlike monolithic MCP servers that try to index code on-the-fly (and stall your 
 
 ---
 
-## 🛠️ Prerequisites: Set Up Qdrant
+## Prerequisites: Set Up Qdrant
 
 Before running the Sentinel, you need a running Qdrant instance.
 
@@ -61,15 +61,18 @@ Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and
 
 ---
 
-## ✨ Features
+## Features
 
+- **Structural Code Analysis**: Uses **Tree-sitter** for high-precision AST-based parsing of Python, JavaScript, TypeScript, Go, Rust, C/C++, Java, and more.
+- **Augmented Semantic Indexing**: Instead of naive line-based splitting, it extracts entire classes, functions, and methods as logical units.
+- **Hierarchical Metadata**: Automatically tags chunks with parent symbols, symbol types, and line ranges for advanced RAG retrieval.
 - **Real-time Monitoring**: Uses `watchdog` to detect file changes and instantly update the index.
+- **Deterministic Sync**: Uses stable UUIDs and automated cleanup to ensure the index stays perfectly in sync with the current state of your code.
 - **Multi-project Support**: Index multiple independent repositories into separate Qdrant collections.
 - **Intelligent Filtering**: Respects `.gitignore`, `.git/info/exclude`, and `.rooignore`.
 - **State Persistence**: Tracks file hashes in a local SQLite database to avoid redundant indexing.
-- **Flexible Embeddings**: Compatible with any OpenAI-style embedding API.
 
-## 🚀 Installation
+## Installation
 
 This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
 
@@ -84,7 +87,7 @@ This project uses [uv](https://github.com/astral-sh/uv) for dependency managemen
    - Copy `.env.example` to `.env` and fill in your API keys.
    - Copy `projects.json.example` to `projects.json` and add your project paths.
 
-## 🏃 Usage
+## Usage
 
 ### Manual Execution
 ```bash
@@ -96,9 +99,9 @@ uv run qdrant-sentinel
 pm2 start ecosystem.config.js
 ```
 
-## 📄 License
+## License
 
 MIT License. See `LICENSE` for details.
 
 ---
-_Miłego dnia 😀_
+_Have a great day_
