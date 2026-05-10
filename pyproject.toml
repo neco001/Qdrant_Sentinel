@@ -3,7 +3,7 @@ name = "Qdrant_Sentinel"
 version = "0.1.0"
 description = "Universal multi-project codebase indexer for Qdrant"
 authors = [
-    { name = "Pawe Lachman", email = "neco.001[*&*]gmail.com" }
+    { name = "Pawe Lachman", email = "neco.001@gmail.com" }
 ]
 dependencies = [
     "watchdog>=4.0.0",
@@ -13,9 +13,11 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "tqdm>=4.66.0",
     "requests>=2.31.0",
+    "tree-sitter==0.21.3",
+    "tree-sitter-languages>=1.10.2",
 ]
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12, <3.13"
 license = { text = "MIT" }
 keywords = ["qdrant", "vector-database", "indexing", "llm", "embeddings", "codebase"]
 classifiers = [

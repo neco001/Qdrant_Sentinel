@@ -1,0 +1,424 @@
+{
+  "timestamp": "2026-05-10T18:50:29.579211Z",
+  "project_dir": "c:\\Repos\\_Toolbox\\qdrant_index",
+  "files": {
+    "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py": {
+      "functions": [
+        {
+          "name": "get_embedding",
+          "signature": "get_embedding(text)",
+          "lineno": 16,
+          "docstring": "Get embedding for text using OpenAI-compatible API.",
+          "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+        },
+        {
+          "name": "create_collection_if_not_exists",
+          "signature": "create_collection_if_not_exists(collection_name)",
+          "lineno": 33,
+          "docstring": "Create Qdrant collection if it doesn't exist.",
+          "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+        },
+        {
+          "name": "get_collection_size",
+          "signature": "get_collection_size(collection_name)",
+          "lineno": 50,
+          "docstring": "Fetch the expected vector size for a collection from Qdrant.",
+          "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+        },
+        {
+          "name": "qdrant_search",
+          "signature": "qdrant_search(query, collection_name, limit)",
+          "lineno": 65,
+          "docstring": "Search for similar texts in a Qdrant collection. Automatically adjusts dimensions.",
+          "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+        },
+        {
+          "name": "qdrant_store",
+          "signature": "qdrant_store(text, metadata, collection_name)",
+          "lineno": 94,
+          "docstring": "Store text and metadata in a Qdrant collection. Automatically adjusts dimensions.",
+          "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "module": "os",
+          "alias": null
+        },
+        {
+          "module": "requests",
+          "alias": null
+        },
+        {
+          "module": "typing",
+          "names": [
+            "Dict",
+            "Any",
+            "List"
+          ]
+        },
+        {
+          "module": "openai",
+          "names": [
+            "OpenAI"
+          ]
+        },
+        {
+          "module": "fastmcp",
+          "names": [
+            "FastMCP"
+          ]
+        }
+      ]
+    },
+    "c:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py": {
+      "functions": [
+        {
+          "name": "main",
+          "signature": "main()",
+          "lineno": 257,
+          "docstring": null,
+          "file": "c:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+        }
+      ],
+      "classes": [
+        {
+          "name": "QdrantSentinel",
+          "lineno": 27,
+          "docstring": null,
+          "methods": [
+            {
+              "name": "__init__",
+              "signature": "__init__(self, watch_paths)",
+              "lineno": 28
+            },
+            {
+              "name": "init_db",
+              "signature": "init_db(self)",
+              "lineno": 34
+            },
+            {
+              "name": "get_file_hash",
+              "signature": "get_file_hash(self, path)",
+              "lineno": 46
+            },
+            {
+              "name": "get_collection_name",
+              "signature": "get_collection_name(self, project_path)",
+              "lineno": 54
+            },
+            {
+              "name": "should_ignore",
+              "signature": "should_ignore(self, path, project_root)",
+              "lineno": 58
+            },
+            {
+              "name": "chunk_text",
+              "signature": "chunk_text(self, text, chunk_size)",
+              "lineno": 102
+            },
+            {
+              "name": "index_file",
+              "signature": "index_file(self, file_path, project_root)",
+              "lineno": 121
+            },
+            {
+              "name": "initial_scan",
+              "signature": "initial_scan(self)",
+              "lineno": 186
+            },
+            {
+              "name": "start_watching",
+              "signature": "start_watching(self)",
+              "lineno": 216
+            }
+          ],
+          "file": "c:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+        },
+        {
+          "name": "SentinelHandler",
+          "lineno": 243,
+          "docstring": null,
+          "methods": [
+            {
+              "name": "__init__",
+              "signature": "__init__(self, sentinel)",
+              "lineno": 244
+            },
+            {
+              "name": "on_modified",
+              "signature": "on_modified(self, event)",
+              "lineno": 247
+            }
+          ],
+          "file": "c:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+        }
+      ],
+      "imports": [
+        {
+          "module": "os",
+          "alias": null
+        },
+        {
+          "module": "time",
+          "alias": null
+        },
+        {
+          "module": "hashlib",
+          "alias": null
+        },
+        {
+          "module": "sqlite3",
+          "alias": null
+        },
+        {
+          "module": "json",
+          "alias": null
+        },
+        {
+          "module": "pathlib",
+          "names": [
+            "Path"
+          ]
+        },
+        {
+          "module": "typing",
+          "names": [
+            "List",
+            "Set",
+            "Dict",
+            "Any"
+          ]
+        },
+        {
+          "module": "watchdog.observers",
+          "names": [
+            "Observer"
+          ]
+        },
+        {
+          "module": "watchdog.events",
+          "names": [
+            "FileSystemEventHandler"
+          ]
+        },
+        {
+          "module": "qdrant_client",
+          "names": [
+            "QdrantClient"
+          ]
+        },
+        {
+          "module": "qdrant_client.http",
+          "names": [
+            "models"
+          ]
+        },
+        {
+          "module": "openai",
+          "names": [
+            "OpenAI"
+          ]
+        },
+        {
+          "module": "dotenv",
+          "names": [
+            "load_dotenv"
+          ]
+        },
+        {
+          "module": "tqdm",
+          "names": [
+            "tqdm"
+          ]
+        },
+        {
+          "module": "pathspec",
+          "alias": null
+        },
+        {
+          "module": "uuid",
+          "alias": null
+        }
+      ]
+    }
+  },
+  "functions": [
+    {
+      "name": "get_embedding",
+      "signature": "get_embedding(text)",
+      "lineno": 16,
+      "docstring": "Get embedding for text using OpenAI-compatible API.",
+      "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+    },
+    {
+      "name": "create_collection_if_not_exists",
+      "signature": "create_collection_if_not_exists(collection_name)",
+      "lineno": 33,
+      "docstring": "Create Qdrant collection if it doesn't exist.",
+      "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+    },
+    {
+      "name": "get_collection_size",
+      "signature": "get_collection_size(collection_name)",
+      "lineno": 50,
+      "docstring": "Fetch the expected vector size for a collection from Qdrant.",
+      "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+    },
+    {
+      "name": "qdrant_search",
+      "signature": "qdrant_search(query, collection_name, limit)",
+      "lineno": 65,
+      "docstring": "Search for similar texts in a Qdrant collection. Automatically adjusts dimensions.",
+      "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+    },
+    {
+      "name": "qdrant_store",
+      "signature": "qdrant_store(text, metadata, collection_name)",
+      "lineno": 94,
+      "docstring": "Store text and metadata in a Qdrant collection. Automatically adjusts dimensions.",
+      "file": "c:\\Repos\\_Toolbox\\qdrant_index\\.agent\\custom_mcp\\qdrant_universal.py"
+    },
+    {
+      "name": "main",
+      "signature": "main()",
+      "lineno": 257,
+      "docstring": null,
+      "file": "c:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+    }
+  ],
+  "classes": [
+    {
+      "name": "QdrantSentinel",
+      "lineno": 27,
+      "docstring": null,
+      "methods": [
+        {
+          "name": "__init__",
+          "signature": "__init__(self, watch_paths)",
+          "lineno": 28
+        },
+        {
+          "name": "init_db",
+          "signature": "init_db(self)",
+          "lineno": 34
+        },
+        {
+          "name": "get_file_hash",
+          "signature": "get_file_hash(self, path)",
+          "lineno": 46
+        },
+        {
+          "name": "get_collection_name",
+          "signature": "get_collection_name(self, project_path)",
+          "lineno": 54
+        },
+        {
+          "name": "should_ignore",
+          "signature": "should_ignore(self, path, project_root)",
+          "lineno": 58
+        },
+        {
+          "name": "chunk_text",
+          "signature": "chunk_text(self, text, chunk_size)",
+          "lineno": 102
+        },
+        {
+          "name": "index_file",
+          "signature": "index_file(self, file_path, project_root)",
+          "lineno": 121
+        },
+        {
+          "name": "initial_scan",
+          "signature": "initial_scan(self)",
+          "lineno": 186
+        },
+        {
+          "name": "start_watching",
+          "signature": "start_watching(self)",
+          "lineno": 216
+        }
+      ],
+      "file": "c:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+    },
+    {
+      "name": "SentinelHandler",
+      "lineno": 243,
+      "docstring": null,
+      "methods": [
+        {
+          "name": "__init__",
+          "signature": "__init__(self, sentinel)",
+          "lineno": 244
+        },
+        {
+          "name": "on_modified",
+          "signature": "on_modified(self, event)",
+          "lineno": 247
+        }
+      ],
+      "file": "c:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+    }
+  ],
+  "mappings": {},
+  "content_hashes": [
+    {
+      "file_path": ".agent\\custom_mcp\\qdrant_universal.py",
+      "hash_value": "c855927df3b0ba2b68022fc8c308d1d8c2dd57057452810854ac7ab3944e8be5",
+      "hash_algorithm": "sha256",
+      "semantic_markers": [
+        "func:get_embedding",
+        "func:create_collection_if_not_exists",
+        "func:get_collection_size",
+        "func:qdrant_search",
+        "func:qdrant_store",
+        "import:os",
+        "import:requests",
+        "import:typing",
+        "import:openai",
+        "import:fastmcp"
+      ],
+      "created_at": "2026-05-10T18:50:29.898448Z"
+    },
+    {
+      "file_path": "sentinel.py",
+      "hash_value": "822292627b5280b14b49de37406e3dcbc372fab46cf7c43d2cbf337929f04778",
+      "hash_algorithm": "sha256",
+      "semantic_markers": [
+        "func:__init__",
+        "func:init_db",
+        "func:get_file_hash",
+        "func:get_collection_name",
+        "func:should_ignore",
+        "func:chunk_text",
+        "func:index_file",
+        "func:initial_scan",
+        "func:start_watching",
+        "func:__init__",
+        "func:on_modified",
+        "func:main",
+        "class:QdrantSentinel",
+        "class:SentinelHandler",
+        "import:os",
+        "import:time",
+        "import:hashlib",
+        "import:sqlite3",
+        "import:json",
+        "import:pathlib",
+        "import:typing",
+        "import:watchdog.observers",
+        "import:watchdog.events",
+        "import:qdrant_client",
+        "import:qdrant_client.http",
+        "import:openai",
+        "import:dotenv",
+        "import:tqdm",
+        "import:pathspec",
+        "import:uuid"
+      ],
+      "created_at": "2026-05-10T18:50:29.900279Z"
+    }
+  ],
+  "shadow_mode": false
+}
