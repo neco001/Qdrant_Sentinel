@@ -203,9 +203,22 @@ class QdrantSentinel:
                 emb_res = self.ai_client.embeddings.create(input=batch, model=EMBEDDING_MODEL_NAME)
                 all_embeddings.extend([e.embedding for e in emb_res.data])
 
+            # Clear old points for this file to prevent duplicates and orphaned chunks
+            rel_path = str(file_path.relative_to(project_root))
+            if self.client.collection_exists(collection_name):
+                self.client.delete(
+                    collection_name=collection_name,
+                    points_selector=models.Filter(
+                        must=[
+                            models.FieldCondition(key="file_path", match=models.MatchValue(value=rel_path)),
+                        ]
+                    )
+                )
+
             points = []
             for i, (payload, embedding) in enumerate(zip(final_payloads, all_embeddings)):
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{file_path}_{i}_{time.time()}"))
+                # Use a deterministic ID based on file path and chunk index to allow overwriting
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{collection_name}_{rel_path}_{i}"))
                 points.append(models.PointStruct(
                     id=point_id, vector=embedding,
                     payload=payload
