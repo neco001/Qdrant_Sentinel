@@ -13,6 +13,10 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from tqdm import tqdm
 import pathspec
+import uuid
+from parser_wrapper import parse_file
+from ast_walker import extract_structural_nodes
+from chunker import build_chunks, EXT_TO_LANG
 
 # Load environment variables
 load_dotenv()
@@ -135,8 +139,48 @@ class QdrantSentinel:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
-            chunks = self.chunk_text(content)
-            if not chunks:
+            # Semantic chunking attempt
+            source_bytes = content.encode('utf-8', errors='replace')
+            tree = parse_file(str(file_path), content)
+            
+            semantic_chunks = []
+            if tree:
+                nodes = extract_structural_nodes(tree, source_bytes)
+                semantic_chunks = build_chunks(nodes, source_bytes)
+            
+            final_chunks = []
+            final_payloads = []
+
+            if semantic_chunks:
+                # Use semantic chunks with extended metadata
+                language = EXT_TO_LANG.get(file_path.suffix.lower(), "unknown")
+                for c in semantic_chunks:
+                    final_chunks.append(c['source'])
+                    final_payloads.append({
+                        "text": c['source'],
+                        "file_path": str(file_path.relative_to(project_root)),
+                        "project": project_root.name,
+                        "chunk_index": c['chunk_index'],
+                        "symbol_name": c['name'],
+                        "symbol_type": c['type'],
+                        "parent_symbol": c.get('parent_name'),
+                        "language": language,
+                        "line_range": [c['start_line'], c['end_line']]
+                    })
+            else:
+                # Fallback to simple line-based chunking
+                chunks = self.chunk_text(content)
+                for i, chunk in enumerate(chunks):
+                    if not chunk.strip(): continue
+                    final_chunks.append(chunk)
+                    final_payloads.append({
+                        "text": chunk, 
+                        "file_path": str(file_path.relative_to(project_root)), 
+                        "project": project_root.name, 
+                        "chunk_index": i
+                    })
+
+            if not final_chunks:
                 return
 
             # Ensure collection exists (atomic check)
@@ -152,25 +196,19 @@ class QdrantSentinel:
 
             all_embeddings = []
             # Alibaba/OpenAI support batching multiple inputs in one request
-            # We'll batch in groups of 50 to be safe and efficient
-            for j in range(0, len(chunks), 50):
-                batch = [c.strip() for c in chunks[j:j+50] if c.strip()]
+            for j in range(0, len(final_chunks), 50):
+                batch = [c.strip() for c in final_chunks[j:j+50] if c.strip()]
                 if not batch: continue
                 
                 emb_res = self.ai_client.embeddings.create(input=batch, model=EMBEDDING_MODEL_NAME)
                 all_embeddings.extend([e.embedding for e in emb_res.data])
 
             points = []
-            for i, (chunk, embedding) in enumerate(zip([c for c in chunks if c.strip()], all_embeddings)):
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{file_path}_{i}"))
+            for i, (payload, embedding) in enumerate(zip(final_payloads, all_embeddings)):
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{file_path}_{i}_{time.time()}"))
                 points.append(models.PointStruct(
                     id=point_id, vector=embedding,
-                    payload={
-                        "text": chunk, 
-                        "file_path": str(file_path.relative_to(project_root)), 
-                        "project": project_root.name, 
-                        "chunk_index": i
-                    }
+                    payload=payload
                 ))
 
             if points:
@@ -180,7 +218,8 @@ class QdrantSentinel:
                 conn.execute("INSERT OR REPLACE INTO file_states (file_path, hash, last_indexed, collection_name) VALUES (?, ?, ?, ?)",
                            (str(file_path), current_hash, time.time(), collection_name))
 
-        except Exception:
+        except Exception as e:
+            # print(f"Error indexing {file_path}: {e}") # Keep it quiet in prod
             pass
 
     def initial_scan(self):
