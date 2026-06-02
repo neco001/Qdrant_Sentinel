@@ -1,4 +1,7 @@
 import os
+# Fix OpenSSL uplink crash caused by AVG/Avast SSLKEYLOGFILE injection on Windows
+os.environ.pop('SSLKEYLOGFILE', None)
+
 import time
 import hashlib
 import sqlite3
