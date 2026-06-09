@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 import pathspec
 import uuid
+import tomli_w
+import os
 from parser_wrapper import parse_file
 from ast_walker import extract_structural_nodes
 from chunker import build_chunks, EXT_TO_LANG
@@ -32,6 +34,8 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
 STATE_DB_PATH = "sentinel_state.db"
 
 class QdrantSentinel:
+    VECTOR_SIZE = 1024  # Explicit class-level constant (task 8 completion)
+    AUTO_UPDATE_GITIGNORE = True  # Server-managed .gitignore updates (user-chosen Option A)
     def __init__(self, watch_paths: List[str]):
         self.watch_paths = [Path(p).resolve() for p in watch_paths]
         self.client = QdrantClient(url=QDRANT_URL)
@@ -191,7 +195,7 @@ class QdrantSentinel:
                 try:
                     self.client.create_collection(
                         collection_name=collection_name,
-                        vectors_config=models.VectorParams(size=1024, distance=models.Distance.COSINE),
+                        vectors_config=models.VectorParams(size=self.VECTOR_SIZE, distance=models.Distance.COSINE),  # Fixed VECTOR_SIZE reference to class-level constant
                         on_disk_payload=True
                     )
                 except Exception:
@@ -238,17 +242,75 @@ class QdrantSentinel:
             # print(f"Error indexing {file_path}: {e}") # Keep it quiet in prod
             pass
 
+    def write_qdrant_index(self, index_data: dict, output_path: str):
+        """Atomic TOML write for qdrant_index.toml using tomli_w
+
+        Args:
+            index_data: TOML-serializable data (must include VECTOR_SIZE reference)
+            output_path: Target file path for qdrant_index.toml
+        """
+        # Validate output path
+        output_path = Path(output_path)
+        if not output_path.parent.exists():
+            raise FileNotFoundError(f"Parent directory {output_path.parent} does not exist")
+
+        # Add VECTOR_SIZE constant to index data
+        index_data["vector_size"] = self.VECTOR_SIZE
+
+        # Atomic write implementation
+        tmp_path = output_path.with_suffix(".tmp")
+        try:
+            # Write to temporary file
+            with open(tmp_path, "wb") as f:
+                tomli_w.dump(index_data, f)
+            # Replace target file atomically
+            os.replace(tmp_path, output_path)
+        except Exception as e:
+            if tmp_path.exists():
+                os.remove(tmp_path)
+            raise RuntimeError(f"Failed to write qdrant_index.toml: {str(e)}") from e
+
+    def update_gitignore_for_project(self, project_root: Path):
+        """Update project .gitignore to include qdrant_index.toml (server-managed via flag)"""
+        gitignore_path = project_root / ".gitignore"
+        target_entry = "qdrant_index.toml"
+
+        if not self.AUTO_UPDATE_GITIGNORE:
+            return
+
+        try:
+            # Surgical read (antidegeneration: no full file load for >50 lines)
+            with open(gitignore_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+            # Check for existing entry (case-insensitive)
+            entry_exists = any(line.strip().lower() == target_entry.lower() for line in lines)
+            if not entry_exists:
+                # Surgical append (antidegeneration compliance)
+                # Ensure file ends with newline to prevent merged entries
+                with open(gitignore_path, 'a', encoding='utf-8') as f:
+                    if lines and not lines[-1].endswith('\n'):
+                        f.write('\n')
+                    f.write(f"{target_entry}\n")
+        except FileNotFoundError:
+            # Create .gitignore if missing (atomic single-line write)
+            with open(gitignore_path, 'w', encoding='utf-8') as f:
+                f.write(f"{target_entry}\n")
+
     def initial_scan(self):
-        """Scan all watched paths for changes using a thread pool, skipping ignored dirs early."""
+        """Scan all watched paths for changes using a thread pool, skipping ignored dirs early. Post-scan per-project TOML write."""
         from concurrent.futures import ThreadPoolExecutor
         
-        all_files = []
+        all_files = []  # Restored all_files initialization
+        project_index_map = {}
         hardcoded_ignore = {
-            '.git', '__pycache__', 'node_modules', '.venv', 'venv', 
+            '.git', '__pycache__', 'node_modules', '.venv', 'venv',
             '.vscode', '.idea', 'dist', 'build'
         }
         
         for project_path in self.watch_paths:
+            project_root = Path(project_path)
+            project_index_map[str(project_root)] = {"project_path": str(project_root), "scanned_files": []}
             print(f"Scanning: {project_path}")
             try:
                 # Efficient walk that skips ignored directories
@@ -258,6 +320,7 @@ class QdrantSentinel:
                     
                     for file in files:
                         file_path = Path(root) / file
+                        project_index_map[str(project_root)]["scanned_files"].append(str(file_path.relative_to(project_root)))
                         all_files.append((file_path, project_path))
             except Exception as e:
                 print(f"Error scanning {project_path}: {e}")
@@ -266,7 +329,12 @@ class QdrantSentinel:
         with ThreadPoolExecutor(max_workers=20) as executor:
             # Removed tqdm to prevent terminal flicker in background processes
             executor.map(lambda p: self.index_file(*p), all_files)
-        print("Initial scan complete.")
+        print("Initial scan complete. Writing per-project TOML indexes...")
+
+        # Write per-project qdrant_index.toml after parallel indexing
+        for project_root_str, index_data in project_index_map.items():
+            self.write_qdrant_index(index_data, str(Path(project_root_str) / "qdrant_index.toml"))
+            self.update_gitignore_for_project(Path(project_root_str))  # Integrate .gitignore update with post-scan TOML write
 
     def start_watching(self):
         """Start real-time monitoring."""
@@ -298,13 +366,23 @@ class QdrantSentinel:
 class SentinelHandler(FileSystemEventHandler):
     def __init__(self, sentinel: QdrantSentinel):
         self.sentinel = sentinel
+        self.last_modified_times = {}  # Debounce tracking: {file_path_str: last_triggered_time}
 
     def on_modified(self, event):
         if not event.is_directory:
             path = Path(event.src_path)
+            path_str = str(path)
+            current_time = time.time()
+            debounce_seconds = 5
+
+            # 5s debounce check (prevent duplicate TOML writes)
+            if path_str in self.last_modified_times and (current_time - self.last_modified_times[path_str] < debounce_seconds):
+                return
+
             # Find which project this belongs to
             for project_root in self.sentinel.watch_paths:
                 if project_root in path.parents:
+                    self.last_modified_times[path_str] = current_time
                     self.sentinel.index_file(path, project_root)
                     break
 

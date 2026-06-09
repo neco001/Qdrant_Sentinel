@@ -158,3 +158,4 @@ projects.json
 # OS files
 .DS_Store
 Thumbs.db
+qdrant_index.toml

@@ -1,0 +1,697 @@
+{
+  "timestamp": "2026-06-08T14:29:26.931635Z",
+  "project_dir": "C:\\Repos\\_Toolbox\\qdrant_index",
+  "files": {
+    "C:\\Repos\\_Toolbox\\qdrant_index\\ast_walker.py": {
+      "functions": [
+        {
+          "name": "extract_structural_nodes",
+          "signature": "extract_structural_nodes(tree, source_code)",
+          "lineno": 5,
+          "docstring": "Extracts significant structural nodes from a tree-sitter tree using iterative traversal.\n\nArgs:\n    tree: The tree-sitter tree to traverse\n    source_code: The original source code bytes\n\nReturns:\n    A list of dictionaries containing metadata about structural nodes",
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\ast_walker.py"
+        },
+        {
+          "name": "_extract_node_info",
+          "signature": "_extract_node_info(node, source_code)",
+          "lineno": 61,
+          "docstring": "Extract information from a structural node.",
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\ast_walker.py"
+        },
+        {
+          "name": "_get_node_name",
+          "signature": "_get_node_name(node, source_code)",
+          "lineno": 84,
+          "docstring": "Extract the name of a node based on its type.",
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\ast_walker.py"
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "module": "tree_sitter",
+          "alias": null
+        },
+        {
+          "module": "typing",
+          "names": [
+            "List",
+            "Dict",
+            "Any",
+            "Optional"
+          ]
+        }
+      ]
+    },
+    "C:\\Repos\\_Toolbox\\qdrant_index\\chunker.py": {
+      "functions": [
+        {
+          "name": "build_chunks",
+          "signature": "build_chunks(nodes, source_bytes, max_chars)",
+          "lineno": 19,
+          "docstring": "Build chunks from AST nodes with hierarchical context and recursive splitting.\n\nArgs:\n    nodes: List of node dictionaries from ast_walker\n    source_bytes: Source code bytes\n    max_chars: Maximum characters per chunk\n\nReturns:\n    List of chunk dictionaries",
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\chunker.py"
+        },
+        {
+          "name": "_split_node_into_chunks",
+          "signature": "_split_node_into_chunks(node, node_source, node_start_line, max_chars, parent_name)",
+          "lineno": 105,
+          "docstring": "Split a large node into multiple chunks.",
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\chunker.py"
+        }
+      ],
+      "classes": [],
+      "imports": []
+    },
+    "C:\\Repos\\_Toolbox\\qdrant_index\\parser_wrapper.py": {
+      "functions": [
+        {
+          "name": "parse_file",
+          "signature": "parse_file(file_path, content)",
+          "lineno": 53,
+          "docstring": null,
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\parser_wrapper.py"
+        }
+      ],
+      "classes": [
+        {
+          "name": "LazyParserManager",
+          "lineno": 14,
+          "docstring": null,
+          "methods": [
+            {
+              "name": "__init__",
+              "signature": "__init__(self)",
+              "lineno": 15
+            },
+            {
+              "name": "_get_language",
+              "signature": "_get_language(self, ext)",
+              "lineno": 19
+            },
+            {
+              "name": "_get_parser",
+              "signature": "_get_parser(self, lang)",
+              "lineno": 30
+            },
+            {
+              "name": "parse_file",
+              "signature": "parse_file(self, file_path, content)",
+              "lineno": 39
+            }
+          ],
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\parser_wrapper.py"
+        }
+      ],
+      "imports": [
+        {
+          "module": "os",
+          "alias": null
+        },
+        {
+          "module": "threading",
+          "alias": null
+        },
+        {
+          "module": "typing",
+          "names": [
+            "Optional"
+          ]
+        },
+        {
+          "module": "tree_sitter",
+          "alias": null
+        },
+        {
+          "module": "tree_sitter_languages",
+          "alias": null
+        }
+      ]
+    },
+    "C:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py": {
+      "functions": [
+        {
+          "name": "main",
+          "signature": "main()",
+          "lineno": 312,
+          "docstring": null,
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+        }
+      ],
+      "classes": [
+        {
+          "name": "QdrantSentinel",
+          "lineno": 34,
+          "docstring": null,
+          "methods": [
+            {
+              "name": "__init__",
+              "signature": "__init__(self, watch_paths)",
+              "lineno": 35
+            },
+            {
+              "name": "init_db",
+              "signature": "init_db(self)",
+              "lineno": 41
+            },
+            {
+              "name": "get_file_hash",
+              "signature": "get_file_hash(self, path)",
+              "lineno": 53
+            },
+            {
+              "name": "get_collection_name",
+              "signature": "get_collection_name(self, project_path)",
+              "lineno": 61
+            },
+            {
+              "name": "should_ignore",
+              "signature": "should_ignore(self, path, project_root)",
+              "lineno": 65
+            },
+            {
+              "name": "chunk_text",
+              "signature": "chunk_text(self, text, chunk_size)",
+              "lineno": 109
+            },
+            {
+              "name": "index_file",
+              "signature": "index_file(self, file_path, project_root)",
+              "lineno": 128
+            },
+            {
+              "name": "initial_scan",
+              "signature": "initial_scan(self)",
+              "lineno": 241
+            },
+            {
+              "name": "start_watching",
+              "signature": "start_watching(self)",
+              "lineno": 271
+            }
+          ],
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+        },
+        {
+          "name": "SentinelHandler",
+          "lineno": 298,
+          "docstring": null,
+          "methods": [
+            {
+              "name": "__init__",
+              "signature": "__init__(self, sentinel)",
+              "lineno": 299
+            },
+            {
+              "name": "on_modified",
+              "signature": "on_modified(self, event)",
+              "lineno": 302
+            }
+          ],
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+        }
+      ],
+      "imports": [
+        {
+          "module": "os",
+          "alias": null
+        },
+        {
+          "module": "time",
+          "alias": null
+        },
+        {
+          "module": "hashlib",
+          "alias": null
+        },
+        {
+          "module": "sqlite3",
+          "alias": null
+        },
+        {
+          "module": "json",
+          "alias": null
+        },
+        {
+          "module": "pathlib",
+          "names": [
+            "Path"
+          ]
+        },
+        {
+          "module": "typing",
+          "names": [
+            "List",
+            "Set",
+            "Dict",
+            "Any"
+          ]
+        },
+        {
+          "module": "watchdog.observers",
+          "names": [
+            "Observer"
+          ]
+        },
+        {
+          "module": "watchdog.events",
+          "names": [
+            "FileSystemEventHandler"
+          ]
+        },
+        {
+          "module": "qdrant_client",
+          "names": [
+            "QdrantClient"
+          ]
+        },
+        {
+          "module": "qdrant_client.http",
+          "names": [
+            "models"
+          ]
+        },
+        {
+          "module": "openai",
+          "names": [
+            "OpenAI"
+          ]
+        },
+        {
+          "module": "dotenv",
+          "names": [
+            "load_dotenv"
+          ]
+        },
+        {
+          "module": "tqdm",
+          "names": [
+            "tqdm"
+          ]
+        },
+        {
+          "module": "pathspec",
+          "alias": null
+        },
+        {
+          "module": "uuid",
+          "alias": null
+        },
+        {
+          "module": "parser_wrapper",
+          "names": [
+            "parse_file"
+          ]
+        },
+        {
+          "module": "ast_walker",
+          "names": [
+            "extract_structural_nodes"
+          ]
+        },
+        {
+          "module": "chunker",
+          "names": [
+            "build_chunks",
+            "EXT_TO_LANG"
+          ]
+        },
+        {
+          "module": "uuid",
+          "alias": null
+        }
+      ]
+    },
+    "C:\\Repos\\_Toolbox\\qdrant_index\\test_ast_walker.py": {
+      "functions": [
+        {
+          "name": "test_extract_python_function",
+          "signature": "test_extract_python_function()",
+          "lineno": 5,
+          "docstring": null,
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\test_ast_walker.py"
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "module": "pytest",
+          "alias": null
+        },
+        {
+          "module": "ast_walker",
+          "names": [
+            "extract_structural_nodes"
+          ]
+        },
+        {
+          "module": "parser_wrapper",
+          "names": [
+            "parse_file"
+          ]
+        }
+      ]
+    },
+    "C:\\Repos\\_Toolbox\\qdrant_index\\test_parser_wrapper.py": {
+      "functions": [
+        {
+          "name": "test_parse_python_file",
+          "signature": "test_parse_python_file()",
+          "lineno": 5,
+          "docstring": null,
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\test_parser_wrapper.py"
+        },
+        {
+          "name": "test_parse_unsupported_file",
+          "signature": "test_parse_unsupported_file()",
+          "lineno": 24,
+          "docstring": null,
+          "file": "C:\\Repos\\_Toolbox\\qdrant_index\\test_parser_wrapper.py"
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "module": "pytest",
+          "alias": null
+        },
+        {
+          "module": "os",
+          "alias": null
+        },
+        {
+          "module": "parser_wrapper",
+          "names": [
+            "parse_file"
+          ]
+        }
+      ]
+    }
+  },
+  "functions": [
+    {
+      "name": "extract_structural_nodes",
+      "signature": "extract_structural_nodes(tree, source_code)",
+      "lineno": 5,
+      "docstring": "Extracts significant structural nodes from a tree-sitter tree using iterative traversal.\n\nArgs:\n    tree: The tree-sitter tree to traverse\n    source_code: The original source code bytes\n\nReturns:\n    A list of dictionaries containing metadata about structural nodes",
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\ast_walker.py"
+    },
+    {
+      "name": "_extract_node_info",
+      "signature": "_extract_node_info(node, source_code)",
+      "lineno": 61,
+      "docstring": "Extract information from a structural node.",
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\ast_walker.py"
+    },
+    {
+      "name": "_get_node_name",
+      "signature": "_get_node_name(node, source_code)",
+      "lineno": 84,
+      "docstring": "Extract the name of a node based on its type.",
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\ast_walker.py"
+    },
+    {
+      "name": "build_chunks",
+      "signature": "build_chunks(nodes, source_bytes, max_chars)",
+      "lineno": 19,
+      "docstring": "Build chunks from AST nodes with hierarchical context and recursive splitting.\n\nArgs:\n    nodes: List of node dictionaries from ast_walker\n    source_bytes: Source code bytes\n    max_chars: Maximum characters per chunk\n\nReturns:\n    List of chunk dictionaries",
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\chunker.py"
+    },
+    {
+      "name": "_split_node_into_chunks",
+      "signature": "_split_node_into_chunks(node, node_source, node_start_line, max_chars, parent_name)",
+      "lineno": 105,
+      "docstring": "Split a large node into multiple chunks.",
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\chunker.py"
+    },
+    {
+      "name": "parse_file",
+      "signature": "parse_file(file_path, content)",
+      "lineno": 53,
+      "docstring": null,
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\parser_wrapper.py"
+    },
+    {
+      "name": "main",
+      "signature": "main()",
+      "lineno": 312,
+      "docstring": null,
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+    },
+    {
+      "name": "test_extract_python_function",
+      "signature": "test_extract_python_function()",
+      "lineno": 5,
+      "docstring": null,
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\test_ast_walker.py"
+    },
+    {
+      "name": "test_parse_python_file",
+      "signature": "test_parse_python_file()",
+      "lineno": 5,
+      "docstring": null,
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\test_parser_wrapper.py"
+    },
+    {
+      "name": "test_parse_unsupported_file",
+      "signature": "test_parse_unsupported_file()",
+      "lineno": 24,
+      "docstring": null,
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\test_parser_wrapper.py"
+    }
+  ],
+  "classes": [
+    {
+      "name": "LazyParserManager",
+      "lineno": 14,
+      "docstring": null,
+      "methods": [
+        {
+          "name": "__init__",
+          "signature": "__init__(self)",
+          "lineno": 15
+        },
+        {
+          "name": "_get_language",
+          "signature": "_get_language(self, ext)",
+          "lineno": 19
+        },
+        {
+          "name": "_get_parser",
+          "signature": "_get_parser(self, lang)",
+          "lineno": 30
+        },
+        {
+          "name": "parse_file",
+          "signature": "parse_file(self, file_path, content)",
+          "lineno": 39
+        }
+      ],
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\parser_wrapper.py"
+    },
+    {
+      "name": "QdrantSentinel",
+      "lineno": 34,
+      "docstring": null,
+      "methods": [
+        {
+          "name": "__init__",
+          "signature": "__init__(self, watch_paths)",
+          "lineno": 35
+        },
+        {
+          "name": "init_db",
+          "signature": "init_db(self)",
+          "lineno": 41
+        },
+        {
+          "name": "get_file_hash",
+          "signature": "get_file_hash(self, path)",
+          "lineno": 53
+        },
+        {
+          "name": "get_collection_name",
+          "signature": "get_collection_name(self, project_path)",
+          "lineno": 61
+        },
+        {
+          "name": "should_ignore",
+          "signature": "should_ignore(self, path, project_root)",
+          "lineno": 65
+        },
+        {
+          "name": "chunk_text",
+          "signature": "chunk_text(self, text, chunk_size)",
+          "lineno": 109
+        },
+        {
+          "name": "index_file",
+          "signature": "index_file(self, file_path, project_root)",
+          "lineno": 128
+        },
+        {
+          "name": "initial_scan",
+          "signature": "initial_scan(self)",
+          "lineno": 241
+        },
+        {
+          "name": "start_watching",
+          "signature": "start_watching(self)",
+          "lineno": 271
+        }
+      ],
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+    },
+    {
+      "name": "SentinelHandler",
+      "lineno": 298,
+      "docstring": null,
+      "methods": [
+        {
+          "name": "__init__",
+          "signature": "__init__(self, sentinel)",
+          "lineno": 299
+        },
+        {
+          "name": "on_modified",
+          "signature": "on_modified(self, event)",
+          "lineno": 302
+        }
+      ],
+      "file": "C:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py"
+    }
+  ],
+  "mappings": {
+    "C:\\Repos\\_Toolbox\\qdrant_index\\sentinel.py:index_file": [
+      "parse_file",
+      "extract_structural_nodes",
+      "build_chunks"
+    ],
+    "C:\\Repos\\_Toolbox\\qdrant_index\\test_ast_walker.py:test_extract_python_function": [
+      "parse_file",
+      "extract_structural_nodes"
+    ],
+    "C:\\Repos\\_Toolbox\\qdrant_index\\test_parser_wrapper.py:test_parse_unsupported_file": [
+      "parse_file"
+    ],
+    "C:\\Repos\\_Toolbox\\qdrant_index\\test_parser_wrapper.py:test_parse_python_file": [
+      "parse_file"
+    ]
+  },
+  "content_hashes": [
+    {
+      "file_path": "ast_walker.py",
+      "hash_value": "2390b6fbbae5b261d0a677e0bd08e7037d79e6fab1d762206fba921a570010fc",
+      "hash_algorithm": "sha256",
+      "semantic_markers": [
+        "func:extract_structural_nodes",
+        "func:_extract_node_info",
+        "func:_get_node_name",
+        "import:tree_sitter",
+        "import:typing"
+      ],
+      "created_at": "2026-06-08T14:29:27.221304Z"
+    },
+    {
+      "file_path": "chunker.py",
+      "hash_value": "ea75b799a9359238507d8c895d0e8e402cef92d93b88be2cacd1ca5c765b9a4a",
+      "hash_algorithm": "sha256",
+      "semantic_markers": [
+        "func:build_chunks",
+        "func:_split_node_into_chunks"
+      ],
+      "created_at": "2026-06-08T14:29:27.223201Z"
+    },
+    {
+      "file_path": "parser_wrapper.py",
+      "hash_value": "f47703f53d18f79a1fd42d2a5d83c5f9061548077bfa271b1c45569239510941",
+      "hash_algorithm": "sha256",
+      "semantic_markers": [
+        "func:__init__",
+        "func:_get_language",
+        "func:_get_parser",
+        "func:parse_file",
+        "func:parse_file",
+        "class:LazyParserManager",
+        "import:os",
+        "import:threading",
+        "import:typing",
+        "import:tree_sitter",
+        "import:tree_sitter_languages"
+      ],
+      "created_at": "2026-06-08T14:29:27.224788Z"
+    },
+    {
+      "file_path": "sentinel.py",
+      "hash_value": "188a0abfba753e46739204f03e4f0807386328c4b66a8ef3685ba62eba49ac28",
+      "hash_algorithm": "sha256",
+      "semantic_markers": [
+        "func:__init__",
+        "func:init_db",
+        "func:get_file_hash",
+        "func:get_collection_name",
+        "func:should_ignore",
+        "func:chunk_text",
+        "func:index_file",
+        "func:initial_scan",
+        "func:start_watching",
+        "func:__init__",
+        "func:on_modified",
+        "func:main",
+        "class:QdrantSentinel",
+        "class:SentinelHandler",
+        "import:os",
+        "import:time",
+        "import:hashlib",
+        "import:sqlite3",
+        "import:json",
+        "import:pathlib",
+        "import:typing",
+        "import:watchdog.observers",
+        "import:watchdog.events",
+        "import:qdrant_client",
+        "import:qdrant_client.http",
+        "import:openai",
+        "import:dotenv",
+        "import:tqdm",
+        "import:pathspec",
+        "import:uuid",
+        "import:parser_wrapper",
+        "import:ast_walker",
+        "import:chunker",
+        "import:uuid"
+      ],
+      "created_at": "2026-06-08T14:29:27.226661Z"
+    },
+    {
+      "file_path": "test_ast_walker.py",
+      "hash_value": "de9241e193e10c420632a0663303ca524c3c90b5a325c3c6149aa59d7be4f6b0",
+      "hash_algorithm": "sha256",
+      "semantic_markers": [
+        "func:test_extract_python_function",
+        "func:my_method",
+        "func:top_level_func",
+        "class:MyClass",
+        "import:pytest",
+        "import:ast_walker",
+        "import:parser_wrapper"
+      ],
+      "created_at": "2026-06-08T14:29:27.227866Z"
+    },
+    {
+      "file_path": "test_parser_wrapper.py",
+      "hash_value": "695b4625c56cf2d16bcb9a17ceb42681f6e9be43e5ee3cd2ad6b1a0dbe5ed5bd",
+      "hash_algorithm": "sha256",
+      "semantic_markers": [
+        "func:test_parse_python_file",
+        "func:hello_world",
+        "func:test_parse_unsupported_file",
+        "import:pytest",
+        "import:os",
+        "import:parser_wrapper"
+      ],
+      "created_at": "2026-06-08T14:29:27.229150Z"
+    }
+  ],
+  "shadow_mode": false
+}
