@@ -36,7 +36,7 @@ While **Qdrant Sentinel** handles the _indexing_ (getting data in), it works bes
 Unlike monolithic MCP servers that try to index code on-the-fly (and stall your LLM interface), this **split architecture** ensures:
 - **Index is always ready**: Sentinel runs as a background daemon.
 - **Low Overhead**: The AI only queries what it needs via the MCP tool.
-- **Stability**: Large scans don't crash your Claude Desktop session.
+- **Stability**: Large scans doesn't crash your Claude Desktop session.
 
 | Feature | Standard MCP Indexers | Qdrant Sentinel + Universal MCP |
 | :--- | :---: | :---: |
@@ -71,6 +71,49 @@ Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and
 - **Multi-project Support**: Index multiple independent repositories into separate Qdrant collections.
 - **Intelligent Filtering**: Respects `.gitignore`, `.git/info/exclude`, and `.rooignore`.
 - **State Persistence**: Tracks file hashes in a local SQLite database to avoid redundant indexing.
+- **Per-Project Configuration**: Generates `qdrant_index.toml` files for each project with custom indexing settings.
+- **Automatic .gitignore Management**: Optionally auto-updates `.gitignore` to exclude `qdrant_index.toml` files.
+- **Debounced Updates**: Implements 5-second debounce to prevent rapid-fire reindexing during file storms.
+- **Atomic Configuration Writes**: Ensures TOML configuration files are written atomically to prevent corruption.
+
+## Configuration
+
+### Environment Variables (.env)
+- `QDRANT_URL`: Qdrant instance URL (default: `http://localhost:6333`)
+- `QDRANT_API_KEY`: Qdrant API key (for cloud instances)
+- `EMBEDDING_MODEL`: Embedding model to use (default: `text-embedding-3-small`)
+- `EMBEDDING_API_KEY`: API key for embedding service
+- `AUTO_UPDATE_GITIGNORE`: Automatically update `.gitignore` files (default: `true`)
+
+### Projects Configuration (projects.json)
+```json
+{
+  "projects": [
+    {
+      "name": "my-project",
+      "path": "/path/to/project",
+      "collection_name": "my_project_index",
+      "enabled": true
+    }
+  ]
+}
+```
+
+### Per-Project Configuration (qdrant_index.toml)
+Each project gets a `qdrant_index.toml` file with project-specific settings:
+
+```toml
+[qdrant]
+collection_name = "my_project_index"
+vector_size = 1536
+created_at = "2024-06-09T09:30:00Z"
+last_updated = "2024-06-09T09:35:00Z"
+
+[settings]
+auto_update_gitignore = true
+exclude_patterns = ["*.tmp", "*.log"]
+include_patterns = ["*.py", "*.js", "*.ts"]
+```
 
 ## Installation
 
@@ -90,6 +133,7 @@ This project uses [uv](https://github.com/astral-sh/uv) for dependency managemen
 ## Usage
 
 ### Manual Execution
+
 ```bash
 uv run qdrant-sentinel
 ```
@@ -98,6 +142,24 @@ uv run qdrant-sentinel
 ```bash
 pm2 start ecosystem.config.js
 ```
+
+### Monitoring and Debugging
+
+The Sentinel provides detailed logging:
+- **INFO**: Normal operations (file changes, indexing progress)
+- **WARNING**: Configuration issues, skipped files
+- **ERROR**: Critical failures (API errors, file access issues)
+
+### Advanced Features
+
+#### Automatic .gitignore Management
+When `AUTO_UPDATE_GITIGNORE=true`, the Sentinel automatically adds `qdrant_index.toml` to each project's `.gitignore` file. This prevents version control conflicts and keeps your repository clean.
+
+#### Debounced Updates
+The Sentinel implements a 5-second debounce mechanism to handle file storms (e.g., during git operations or bulk file saves). This prevents excessive reindexing and improves performance.
+
+#### Atomic Configuration Writes
+All TOML configuration files are written atomically using temporary files and atomic moves, preventing corruption even if the process is interrupted.
 
 ## License
 
