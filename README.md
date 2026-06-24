@@ -13,9 +13,11 @@ Manually feeding files to an LLM is tedious and slow. **Qdrant Sentinel** automa
 ```mermaid
 graph LR
     A[Local Code] -->|Real-time Watch| B(Qdrant Sentinel)
-    B -->|Batch Embeddings| C[(Qdrant DB)]
-    C <-->|Query/Retrieval| D[Universal MCP Server]
-    D <-->|Context| E[AI Agent / Claude]
+    B -->|Dual-Write| C[(Qdrant DB)]
+    B -->|Dual-Write| D[(OpenViking)]
+    C <-->|Query/Retrieval| E[Universal MCP Server]
+    D <-->|Context Retrieval| E
+    E <-->|Context| F[AI Agent / Claude]
 ```
 
 ---
@@ -30,20 +32,23 @@ graph LR
 
 ## Better Together (Production-Grade RAG)
 
-While **Qdrant Sentinel** handles the _indexing_ (getting data in), it works best when paired with the **[Qdrant Universal MCP Server](https://github.com/neco001/qdrant2.git)**.
+While **Qdrant Sentinel** handles _indexing_ (getting data in), it works best when paired with **[Qdrant Universal MCP Server](https://github.com/neco001/qdrant2.git)** and **[OpenViking](https://github.com/volcengine/OpenViking)**.
 
 ### Why this architecture?
 Unlike monolithic MCP servers that try to index code on-the-fly (and stall your LLM interface), this **split architecture** ensures:
 - **Index is always ready**: Sentinel runs as a background daemon.
-- **Low Overhead**: The AI only queries what it needs via the MCP tool.
+- **Low Overhead**: The AI only queries what it needs via MCP tool.
 - **Stability**: Large scans doesn't crash your Claude Desktop session.
+- **Dual-Write Pipeline**: Synchronized indexing to both Qdrant (vector search) and OpenViking (context database) for comprehensive code understanding.
 
-| Feature | Standard MCP Indexers | Qdrant Sentinel + Universal MCP |
+| Feature | Standard MCP Indexers | Qdrant Sentinel + Universal MCP + OpenViking |
 | :--- | :---: | :---: |
 | **Indexing Mode** | On-demand (stalls UI) | **Background Daemon** (Always-on) |
 | **Multi-project** | Often single-folder | **Unlimited projects** via config |
 | **Vector Integrity** | Basic (may pad vectors) | **Strict dimension enforcement** |
 | **Model Support** | Often OpenAI only | **Universal Proxy** (DashScope, Ollama, etc.) |
+| **Context Management** | Flat vector storage | **Hierarchical filesystem + L0/L1/L2 layers** |
+| **Memory** | Conversation history only | **User + Agent experience memory** |
 
 ---
 
@@ -75,6 +80,8 @@ Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and
 - **Automatic .gitignore Management**: Optionally auto-updates `.gitignore` to exclude `qdrant_index.toml` files.
 - **Debounced Updates**: Implements 5-second debounce to prevent rapid-fire reindexing during file storms.
 - **Atomic Configuration Writes**: Ensures TOML configuration files are written atomically to prevent corruption.
+- **Dual-Write Pipeline**: Atomically indexes code to both Qdrant and OpenViking with SQLite cross-reference mapping and automatic rollback on failure.
+- **Graceful Degradation**: Continues operation if OpenViking is unavailable, with full recovery on reconnect.
 
 ## Configuration
 
@@ -153,7 +160,7 @@ The Sentinel provides detailed logging:
 ### Advanced Features
 
 #### Automatic .gitignore Management
-When `AUTO_UPDATE_GITIGNORE=true`, the Sentinel automatically adds `qdrant_index.toml` to each project's `.gitignore` file. This prevents version control conflicts and keeps your repository clean.
+When `AUTO_UPDATE_GITIGNORE=true`, Sentinel automatically adds `qdrant_index.toml` to each project's `.gitignore` file. This prevents version control conflicts and keeps your repository clean.
 
 #### Debounced Updates
 The Sentinel implements a 5-second debounce mechanism to handle file storms (e.g., during git operations or bulk file saves). This prevents excessive reindexing and improves performance.
@@ -161,9 +168,28 @@ The Sentinel implements a 5-second debounce mechanism to handle file storms (e.g
 #### Atomic Configuration Writes
 All TOML configuration files are written atomically using temporary files and atomic moves, preventing corruption even if the process is interrupted.
 
+#### Dual-Write Pipeline
+The Sentinel atomically writes to both Qdrant and OpenViking for each indexed point. If OpenViking fails, the operation degrades gracefully (Qdrant write succeeds). If the SQLite mapping fails, both writes are rolled back to maintain consistency.
+
 ## License
 
 MIT License. See `LICENSE` for details.
 
+## Third-Party Licenses & Attributions
+
+This project integrates with the following third-party software:
+
+### OpenViking
+- **License**: AGPLv3
+- **Source**: [https://github.com/volcengine/OpenViking](https://github.com/volcengine/OpenViking)
+- **Usage**: Context database for AI agents with hierarchical filesystem paradigm
+- **Attribution**: This project uses OpenViking for augmented context management and memory storage. OpenViking is licensed under AGPLv3, and its source code is available at the above repository.
+
+### Qdrant
+- **License**: Apache 2.0
+- **Source**: [https://github.com/qdrant/qdrant](https://github.com/qdrant/qdrant)
+- **Usage**: Vector database for semantic search and retrieval
+
 ---
+
 _Have a great day_

@@ -88,9 +88,8 @@ class TestDualWritePipeline:
         mock_openviking_client.add_resource.assert_called_once()
         
         # Verify SQLite mapping was inserted
-        cursor = mock_sqlite_conn.cursor.return_value
         insert_calls = [
-            c for c in cursor.execute.call_args_list 
+            c for c in mock_sqlite_conn.execute.call_args_list
             if "INSERT INTO ov_mappings" in str(c)
         ]
         assert len(insert_calls) > 0
@@ -115,9 +114,8 @@ class TestDualWritePipeline:
         mock_qdrant_client.upsert.assert_called_once()
         
         # Verify no mapping was stored (atomicity)
-        cursor = mock_sqlite_conn.cursor.return_value
         insert_calls = [
-            c for c in cursor.execute.call_args_list 
+            c for c in mock_sqlite_conn.execute.call_args_list
             if "INSERT INTO ov_mappings" in str(c)
         ]
         assert len(insert_calls) == 0
@@ -132,8 +130,7 @@ class TestDualWritePipeline:
         mock_openviking_client.add_resource.return_value = ov_resource_id
         
         # Simulate SQLite insert failure
-        cursor = mock_sqlite_conn.cursor.return_value
-        cursor.execute.side_effect = sqlite3.IntegrityError("Constraint failed")
+        mock_sqlite_conn.execute.side_effect = sqlite3.IntegrityError("Constraint failed")
         
         with patch('sentinel.get_db_connection', return_value=mock_sqlite_conn):
             with pytest.raises(sqlite3.IntegrityError):

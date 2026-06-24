@@ -249,7 +249,22 @@ class QdrantSentinel:
                 ))
 
             if points:
-                self.client.upsert(collection_name=collection_name, points=points)
+                # Dual-write pipeline: Qdrant + OpenViking
+                with sqlite3.connect(STATE_DB_PATH) as conn:
+                    for point in points:
+                        # Convert PointStruct to dict for index_point_dual_write
+                        point_dict = {
+                            'id': point.id,
+                            'vector': point.vector,
+                            'payload': point.payload
+                        }
+                        # Call dual-write function (graceful degradation handled internally)
+                        index_point_dual_write(
+                            point=point_dict,
+                            qdrant_client=self.client,
+                            ov_client=self.ov_client,
+                            conn=conn
+                        )
 
             with sqlite3.connect(STATE_DB_PATH) as conn:
                 conn.execute("INSERT OR REPLACE INTO file_states (file_path, hash, last_indexed, collection_name) VALUES (?, ?, ?, ?)",
@@ -422,17 +437,21 @@ def index_point_dual_write(point: Dict[str, Any], qdrant_client, ov_client, conn
         conn: SQLite connection for mapping storage
         
     Returns:
-        bool: True if dual-write succeeded, False if OpenViking failed (graceful degradation)
+        bool: True if Qdrant succeeded (with or without OpenViking), False if Qdrant failed
     """
     qdrant_id = str(point['id'])
     file_path = point['payload'].get('file_path', 'unknown')
     language = point['payload'].get('language', 'unknown')
     
-    # Step 1: Upsert to Qdrant
-    qdrant_client.upsert(
-        collection_name="code_index",
-        points=[point]
-    )
+    # Step 1: Upsert to QQdrant
+    try:
+        qdrant_client.upsert(
+            collection_name="code_index",
+            points=[point]
+        )
+    except Exception as qdrant_err:
+        logger.error(f"Qdrant upsert failed for {file_path}: {qdrant_err}")
+        return False
     
     # Step 2: Add to OpenViking
     try:
@@ -444,8 +463,7 @@ def index_point_dual_write(point: Dict[str, Any], qdrant_client, ov_client, conn
         ov_id = ov_response.get('id') if isinstance(ov_response, dict) else ov_response
         
         # Step 3: Store mapping in SQLite
-        cursor = conn.cursor()
-        cursor.execute(
+        conn.execute(
             "INSERT INTO ov_mappings (qdrant_id, ov_resource_id, file_path) VALUES (?, ?, ?)",
             (qdrant_id, ov_id, file_path)
         )
@@ -453,8 +471,9 @@ def index_point_dual_write(point: Dict[str, Any], qdrant_client, ov_client, conn
         return True
         
     except sqlite3.Error as db_err:
-        # SQLite insert failed - rollback Qdrant
+        # SQLite insert failed - rollback both SQLite and Qdrant
         logger.error(f"SQLite mapping failed, rolling back Qdrant point {qdrant_id}: {db_err}")
+        conn.rollback()
         try:
             qdrant_client.delete(
                 collection_name="code_index",

@@ -1,121 +1,118 @@
 import pytest
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock, mock_open, call
 from pathlib import Path
 import sqlite3
-from sentinel import QdrantSentinel
+from sentinel import QdrantSentinel, index_point_dual_write
 
 
-@pytest.fixture
-def mock_clients():
-    """Mock QdrantClient, OpenVikingClient, and SQLite connections."""
-    with patch('sentinel.QdrantClient') as mock_qdrant, \
-         patch('sentinel.OpenVikingClient') as mock_ov, \
-         patch('sentinel.sqlite3.connect') as mock_sqlite:
-        
-        # Setup Qdrant mock
-        mock_qdrant_instance = MagicMock()
-        mock_qdrant_instance.collection_exists.return_value = False
-        mock_qdrant.return_value = mock_qdrant_instance
-        
-        # Setup OpenViking mock
-        mock_ov_instance = MagicMock()
-        mock_ov_instance.add_resource.return_value = {'id': 'ov_123'}
-        mock_ov.return_value = mock_ov_instance
-        
-        # Setup SQLite mock
-        mock_sqlite_instance = MagicMock()
-        mock_sqlite.return_value = mock_sqlite_instance
-        
-        yield {
-            'qdrant': mock_qdrant_instance,
-            'ov': mock_ov_instance,
-            'sqlite': mock_sqlite_instance
-        }
-
-
-@pytest.fixture
-def mock_file_content():
-    """Mock file reading and AST parsing."""
-    dummy_content = "def foo():\n    pass\n"
+def test_index_point_dual_write_success():
+    """Test that index_point_dual_write calls both Qdrant and OpenViking."""
+    # Setup mocks
+    mock_qdrant = MagicMock()
+    mock_ov = MagicMock()
+    mock_ov.add_resource.return_value = {'id': 'ov_123'}
+    mock_conn = MagicMock()
     
-    with patch('builtins.open', mock_open(read_data=dummy_content)), \
-         patch('sentinel.parse_file') as mock_parse, \
-         patch('sentinel.extract_structural_nodes') as mock_extract, \
-         patch('sentinel.build_chunks') as mock_chunks, \
-         patch('sentinel.get_db_connection') as mock_db:
-        
-        # Mock parse_file to return None (fallback to simple chunking)
-        mock_parse.return_value = None
-        
-        # Mock get_db_connection
-        mock_db_conn = MagicMock()
-        mock_db.return_value = mock_db_conn
-        
-        yield {
-            'content': dummy_content,
-            'parse': mock_parse,
-            'extract': mock_extract,
-            'chunks': mock_chunks,
-            'db': mock_db_conn
-        }
-
-
-def test_index_file_calls_dual_write_successfully(mock_clients, mock_file_content):
-    """Test that index_file calls index_point_dual_write for each chunk."""
-    # Create a temporary test file
-    test_file = Path("test_dummy.py")
-    test_file.write_text("def foo():\n    pass\n")
+    # Create a test point
+    point = {
+        'id': 'test123',
+        'vector': [0.1, 0.2, 0.3],
+        'payload': {'text': 'test content', 'file_path': 'test.py'}
+    }
     
-    try:
-        # Create QdrantSentinel instance
-        sentinel = QdrantSentinel(watch_paths=[])
-        
-        # Mock index_point_dual_write to track calls
-        with patch('sentinel.index_point_dual_write') as mock_dual_write:
-            mock_dual_write.return_value = True  # Success
-            
-            # Call index_file
-            sentinel.index_file(test_file, Path.cwd())
-            
-            # Verify dual_write was called
-            assert mock_dual_write.call_count > 0, "index_point_dual_write should be called"
-            
-            # Verify each call had correct parameters
-            for call in mock_dual_write.call_args_list:
-                args, kwargs = call
-                point = args[0]
-                assert 'id' in point
-                assert 'vector' in point
-                assert 'payload' in point
-    finally:
-        # Cleanup
-        if test_file.exists():
-            test_file.unlink()
-
-
-def test_index_file_graceful_degradation_on_openviking_failure(mock_clients, mock_file_content):
-    """Test graceful degradation when OpenViking fails but continues with Qdrant."""
-    # Create a temporary test file
-    test_file = Path("test_dummy.py")
-    test_file.write_text("def foo():\n    pass\n")
+    # Call dual-write function
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn)
     
-    try:
-        # Create QdrantSentinel instance
-        sentinel = QdrantSentinel(watch_paths=[])
-        
-        # Mock index_point_dual_write to simulate OpenViking failure
-        with patch('sentinel.index_point_dual_write') as mock_dual_write:
-            mock_dual_write.return_value = False  # OpenViking failed, but Qdrant succeeded
-            
-            # Call index_file - should not raise exception
-            sentinel.index_file(test_file, Path.cwd())
-            
-            # Verify dual_write was still called
-            assert mock_dual_write.call_count > 0
-            
-            # Verify operation completed without raising exception
-            # (If it raised, test would have failed here)
-    finally:
-        # Cleanup
-        if test_file.exists():
-            test_file.unlink()
+    # Verify both were called
+    assert mock_qdrant.upsert.call_count == 1, "Qdrant upsert should be called once"
+    assert mock_ov.add_resource.call_count == 1, "OpenViking add_resource should be called once"
+    assert result is True, "Dual-write should return True on success"
+    
+    # Verify Qdrant was called with correct parameters
+    upsert_call = mock_qdrant.upsert.call_args
+    assert upsert_call is not None, "Qdrant upsert should have been called"
+
+
+def test_index_point_dual_write_openviking_fails_gracefully():
+    """Test that Qdrant succeeds even if OpenViking fails."""
+    # Setup mocks
+    mock_qdrant = MagicMock()
+    mock_ov = MagicMock()
+    mock_ov.add_resource.side_effect = Exception("OpenViking unavailable")
+    mock_conn = MagicMock()
+    
+    # Create a test point
+    point = {
+        'id': 'test123',
+        'vector': [0.1, 0.2, 0.3],
+        'payload': {'text': 'test content', 'file_path': 'test.py'}
+    }
+    
+    # Call dual-write function - should not raise exception
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn)
+    
+    # Verify Qdrant was still called (graceful degradation)
+    assert mock_qdrant.upsert.call_count == 1, "Qdrant upsert should still be called"
+    assert mock_ov.add_resource.call_count == 1, "OpenViking add_resource should be attempted"
+    # Result should still be True because Qdrant succeeded
+    assert result is True, "Dual-write should return True if Qdrant succeeds"
+
+
+def test_index_point_dual_write_qdrant_fails_rolls_back():
+    """Test that if Qdrant fails, nothing is written to SQLite."""
+    # Setup mocks
+    mock_qdrant = MagicMock()
+    mock_qdrant.upsert.side_effect = Exception("Qdrant unavailable")
+    mock_ov = MagicMock()
+    mock_conn = MagicMock()
+    
+    # Create a test point
+    point = {
+        'id': 'test123',
+        'vector': [0.1, 0.2, 0.3],
+        'payload': {'text': 'test content', 'file_path': 'test.py'}
+    }
+    
+    # Call dual-write function
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn)
+    
+    # Verify Qdrant was attempted
+    assert mock_qdrant.upsert.call_count == 1, "Qdrant upsert should be attempted"
+    
+    # Verify OpenViking was NOT called (because Qdrant failed first)
+    assert mock_ov.add_resource.call_count == 0, "OpenViking should not be called if Qdrant fails"
+    
+    # Verify SQLite insert was NOT called (atomicity)
+    assert mock_conn.execute.call_count == 0, "SQLite insert should not be called if Qdrant fails"
+    
+    # Result should be False
+    assert result is False, "Dual-write should return False if Qdrant fails"
+
+
+def test_index_point_dual_write_stores_mapping():
+    """Test that successful dual-write stores mapping in SQLite."""
+    # Setup mocks
+    mock_qdrant = MagicMock()
+    mock_ov = MagicMock()
+    mock_ov.add_resource.return_value = {'id': 'ov_123'}
+    mock_conn = MagicMock()
+    
+    # Create a test point
+    point = {
+        'id': 'qdrant_id_123',
+        'vector': [0.1, 0.2, 0.3],
+        'payload': {'text': 'test content', 'file_path': 'test.py'}
+    }
+    
+    # Call dual-write function
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn)
+    
+    # Verify SQLite insert was called to store mapping
+    assert mock_conn.execute.call_count > 0, "SQLite execute should be called"
+    
+    # Check that the insert was for the mapping table
+    insert_calls = [str(call) for call in mock_conn.execute.call_args_list]
+    assert any('INSERT INTO ov_mappings' in str(call) for call in insert_calls), \
+        "Should insert into ov_mappings table"
+    
+    assert result is True, "Dual-write should return True on success"
