@@ -37,9 +37,8 @@ def test_basic_python_parsing():
     import tree_sitter
     import tree_sitter_languages
     
-    # Get Python language parser using the new API
-    Language = tree_sitter_languages.get_language('python')
-    parser = tree_sitter.Parser(Language)
+    # Get Python parser using get_parser (recommended API)
+    parser = tree_sitter_languages.get_parser('python')
     
     # Parse simple Python code (tree-sitter requires bytes)
     code = b"def foo():\n    pass\n"
