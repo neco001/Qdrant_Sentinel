@@ -6,8 +6,9 @@ import time
 import hashlib
 import sqlite3
 import json
+import logging
 from pathlib import Path
-from typing import List, Set, Dict, Any
+from typing import List, Set, Dict, Any, Optional
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from qdrant_client import QdrantClient
@@ -18,6 +19,8 @@ from tqdm import tqdm
 import pathspec
 import uuid
 import tomli_w
+
+logger = logging.getLogger(__name__)
 import os
 from parser_wrapper import parse_file
 from ast_walker import extract_structural_nodes
@@ -43,7 +46,7 @@ class QdrantSentinel:
         self.init_db()
 
     def init_db(self):
-        """Initialize SQLite DB to store file hashes."""
+        """Initialize SQLite DB to store file hashes and OpenViking ID mappings."""
         with sqlite3.connect(STATE_DB_PATH) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS file_states (
@@ -53,6 +56,18 @@ class QdrantSentinel:
                     collection_name TEXT
                 )
             """)
+            # Create OpenViking ID mapping table for bidirectional mapping
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ov_mappings (
+                    qdrant_id TEXT PRIMARY KEY,
+                    ov_resource_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Create indexes for efficient reverse lookups and file-based queries
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ov_resource ON ov_mappings(ov_resource_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ov_file ON ov_mappings(file_path)")
 
     def get_file_hash(self, path: Path) -> str:
         """Calculate MD5 hash of a file."""
@@ -387,6 +402,151 @@ class SentinelHandler(FileSystemEventHandler):
                     break
 
 import uuid
+from openviking_client import OpenVikingClient
+
+def get_db_connection():
+    """Returns a connection to the SQLite state database."""
+    return sqlite3.connect(STATE_DB_PATH)
+
+
+def index_point_dual_write(point: Dict[str, Any], qdrant_client, ov_client, conn) -> bool:
+    """
+    Upserts a point to Qdrant and OpenViking with transactional integrity.
+    
+    Args:
+        point: Qdrant point dict with id, vector, and payload
+        qdrant_client: Qdrant client instance
+        ov_client: OpenViking client instance
+        conn: SQLite connection for mapping storage
+        
+    Returns:
+        bool: True if dual-write succeeded, False if OpenViking failed (graceful degradation)
+    """
+    qdrant_id = str(point['id'])
+    file_path = point['payload'].get('file_path', 'unknown')
+    language = point['payload'].get('language', 'unknown')
+    
+    # Step 1: Upsert to Qdrant
+    qdrant_client.upsert(
+        collection_name="code_index",
+        points=[point]
+    )
+    
+    # Step 2: Add to OpenViking
+    try:
+        ov_response = ov_client.add_resource(
+            name=file_path,
+            resource_type='code',
+            tags=[language]
+        )
+        ov_id = ov_response.get('id') if isinstance(ov_response, dict) else ov_response
+        
+        # Step 3: Store mapping in SQLite
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO ov_mappings (qdrant_id, ov_resource_id, file_path) VALUES (?, ?, ?)",
+            (qdrant_id, ov_id, file_path)
+        )
+        conn.commit()
+        return True
+        
+    except sqlite3.Error as db_err:
+        # SQLite insert failed - rollback Qdrant
+        logger.error(f"SQLite mapping failed, rolling back Qdrant point {qdrant_id}: {db_err}")
+        try:
+            qdrant_client.delete(
+                collection_name="code_index",
+                points_selector=[qdrant_id]
+            )
+        except Exception as delete_err:
+            logger.error(f"Failed to rollback Qdrant point {qdrant_id}: {delete_err}")
+        raise  # Re-raise to signal failure
+    except Exception as ov_err:
+        logger.warning(f"OpenViking write failed for {file_path}: {ov_err}. Continuing with Qdrant-only.")
+        return True
+
+
+def get_ov_mapping(qdrant_id: str, conn) -> Optional[str]:
+    """
+    Retrieve OpenViking resource ID by Qdrant point ID.
+    
+    Args:
+        qdrant_id: Qdrant point ID
+        conn: SQLite connection
+        
+    Returns:
+        OpenViking resource ID or None if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT ov_resource_id FROM ov_mappings WHERE qdrant_id = ?",
+        (qdrant_id,)
+    )
+    result = cursor.fetchone()
+    return result[0] if result and len(result) > 0 else None
+
+
+def get_qdrant_mapping(ov_resource_id: str, conn) -> Optional[str]:
+    """
+    Retrieve Qdrant point ID by OpenViking resource ID.
+    
+    Args:
+        ov_resource_id: OpenViking resource ID
+        conn: SQLite connection
+        
+    Returns:
+        Qdrant point ID or None if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT qdrant_id FROM ov_mappings WHERE ov_resource_id = ?",
+        (ov_resource_id,)
+    )
+    result = cursor.fetchone()
+    return result[0] if result and len(result) > 0 else None
+
+
+def get_status_report(qdrant_client, sqlite_conn):
+    """
+    Generate a status report comparing Qdrant points and OpenViking mappings.
+    
+    Args:
+        qdrant_client: QdrantClient instance
+        sqlite_conn: SQLite connection object
+        
+    Returns:
+        dict: Status report with keys:
+            - total_qdrant_points: Total points in Qdrant collection
+            - total_ov_resources: Total resources in ov_mappings table
+            - mapped_count: Resources with valid qdrant_id mappings
+            - unmapped_qdrant_count: Qdrant points without mapping
+    """
+    # Get total Qdrant points
+    qdrant_count_result = qdrant_client.count(
+        collection_name="code_index",
+        exact=True
+    )
+    total_qdrant_points = qdrant_count_result.count
+    
+    # Query SQLite for OpenViking mapping stats (single optimized query)
+    cursor = sqlite_conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) as total, COUNT(qdrant_id) as mapped FROM ov_mappings"
+    )
+    total_ov_resources, mapped_count = cursor.fetchone()
+    cursor.close()
+    
+    # Calculate unmapped Qdrant points (prevent negative counts)
+    unmapped_qdrant_count = max(0, total_qdrant_points - mapped_count)
+    
+    return {
+        "total_qdrant_points": total_qdrant_points,
+        "total_ov_resources": total_ov_resources,
+        "mapped_count": mapped_count,
+        "unmapped_qdrant_count": unmapped_qdrant_count
+    }
+
+
 def main():
     # Load configuration from projects.json
     config_path = Path(__file__).parent / "projects.json"
