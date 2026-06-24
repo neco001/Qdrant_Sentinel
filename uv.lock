@@ -446,7 +446,7 @@ requires-dist = [
     { name = "tomli-w", specifier = ">=1.2.0" },
     { name = "tqdm", specifier = ">=4.66.0" },
     { name = "tree-sitter", specifier = "==0.21.3" },
-    { name = "tree-sitter-languages", specifier = ">=1.10.2" },
+    { name = "tree-sitter-languages", specifier = "==1.10.2" },
     { name = "watchdog", specifier = ">=4.0.0" },
 ]
 
