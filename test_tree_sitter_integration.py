@@ -41,8 +41,8 @@ def test_basic_python_parsing():
     PY_LANGUAGE = tree_sitter_languages.get_language('python')
     parser = tree_sitter.Parser(PY_LANGUAGE)
     
-    # Parse simple Python code
-    code = "def foo(): pass"
+    # Parse simple Python code (tree-sitter requires bytes)
+    code = b"def foo():\n    pass\n"
     tree = parser.parse(code)
     
     # Verify parsing succeeded
