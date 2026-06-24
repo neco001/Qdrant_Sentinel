@@ -25,6 +25,7 @@ import os
 from parser_wrapper import parse_file
 from ast_walker import extract_structural_nodes
 from chunker import build_chunks, EXT_TO_LANG
+from openviking_client import OpenVikingClient
 
 # Load environment variables
 load_dotenv()
@@ -43,6 +44,7 @@ class QdrantSentinel:
         self.watch_paths = [Path(p).resolve() for p in watch_paths]
         self.client = QdrantClient(url=QDRANT_URL)
         self.ai_client = OpenAI(api_key=EMBEDDING_API_KEY, base_url=EMBEDDING_BASE_URL)
+        self.ov_client = OpenVikingClient()
         self.init_db()
 
     def init_db(self):
