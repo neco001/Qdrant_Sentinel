@@ -15,9 +15,11 @@ graph LR
     A[Local Code] -->|Real-time Watch| B(Qdrant Sentinel)
     B -->|Dual-Write| C[(Qdrant DB)]
     B -->|Dual-Write| D[(OpenViking)]
-    C <-->|Query/Retrieval| E[Universal MCP Server]
-    D <-->|Context Retrieval| E
-    E <-->|Context| F[AI Agent / Claude]
+    B -->|SQLite Mapping| E[(sentinel_state.db)]
+    C <-->|Query/Retrieval| F[Universal MCP Server]
+    D <-->|Context Retrieval| F
+    E <-->|ID Mapping| F
+    F <-->|Context| G[AI Agent / Claude]
 ```
 
 ---
@@ -40,6 +42,7 @@ Unlike monolithic MCP servers that try to index code on-the-fly (and stall your 
 - **Low Overhead**: The AI only queries what it needs via MCP tool.
 - **Stability**: Large scans doesn't crash your Claude Desktop session.
 - **Dual-Write Pipeline**: Synchronized indexing to both Qdrant (vector search) and OpenViking (context database) for comprehensive code understanding.
+- **Production-Ready**: Built-in health checks, structured logging, and metrics for operational excellence.
 
 | Feature | Standard MCP Indexers | Qdrant Sentinel + Universal MCP + OpenViking |
 | :--- | :---: | :---: |
@@ -49,6 +52,8 @@ Unlike monolithic MCP servers that try to index code on-the-fly (and stall your 
 | **Model Support** | Often OpenAI only | **Universal Proxy** (DashScope, Ollama, etc.) |
 | **Context Management** | Flat vector storage | **Hierarchical filesystem + L0/L1/L2 layers** |
 | **Memory** | Conversation history only | **User + Agent experience memory** |
+| **Observability** | Basic logging | **Structured logging + metrics + health checks** |
+| **Data Consistency** | Best-effort | **Compensating transactions + rollback** |
 
 ---
 
@@ -68,6 +73,7 @@ Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and
 
 ## Features
 
+### Core Indexing
 - **Structural Code Analysis**: Uses **Tree-sitter** for high-precision AST-based parsing of Python, JavaScript, TypeScript, Go, Rust, C/C++, Java, and more.
 - **Augmented Semantic Indexing**: Instead of naive line-based splitting, it extracts entire classes, functions, and methods as logical units.
 - **Hierarchical Metadata**: Automatically tags chunks with parent symbols, symbol types, and line ranges for advanced RAG retrieval.
@@ -77,11 +83,22 @@ Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and
 - **Intelligent Filtering**: Respects `.gitignore`, `.git/info/exclude`, and `.rooignore`.
 - **State Persistence**: Tracks file hashes in a local SQLite database to avoid redundant indexing.
 - **Per-Project Configuration**: Generates `qdrant_index.toml` files for each project with custom indexing settings.
+
+### Advanced Features
 - **Automatic .gitignore Management**: Optionally auto-updates `.gitignore` to exclude `qdrant_index.toml` files.
 - **Debounced Updates**: Implements 5-second debounce to prevent rapid-fire reindexing during file storms.
 - **Atomic Configuration Writes**: Ensures TOML configuration files are written atomically to prevent corruption.
+
+### Production-Grade Features
 - **Dual-Write Pipeline**: Atomically indexes code to both Qdrant and OpenViking with SQLite cross-reference mapping and automatic rollback on failure.
 - **Graceful Degradation**: Continues operation if OpenViking is unavailable, with full recovery on reconnect.
+- **Compensating Transactions**: If OpenViking fails after Qdrant upsert, automatically rolls back Qdrant point to maintain data consistency.
+- **Structured Logging**: Comprehensive logging with structured JSON format for easy integration with log aggregators (ELK, Splunk, etc.).
+- **Built-in Metrics**: In-memory metrics collector tracking dual-write success rates, OpenViking failures, and rollback counts.
+- **Health Checks**: Built-in `qdrant-index health` command for operational monitoring and alerting.
+- **SQLite Optimization**: WAL mode enabled for better concurrency, with optimized indexes on frequently queried columns.
+
+---
 
 ## Configuration
 
@@ -91,6 +108,8 @@ Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and
 - `EMBEDDING_MODEL`: Embedding model to use (default: `text-embedding-3-small`)
 - `EMBEDDING_API_KEY`: API key for embedding service
 - `AUTO_UPDATE_GITIGNORE`: Automatically update `.gitignore` files (default: `true`)
+- `LOG_LEVEL`: Logging level (default: `INFO`)
+- `LOG_FORMAT`: Log format - `text` or `json` (default: `text`)
 
 ### Projects Configuration (projects.json)
 ```json
@@ -122,6 +141,8 @@ exclude_patterns = ["*.tmp", "*.log"]
 include_patterns = ["*.py", "*.js", "*.ts"]
 ```
 
+---
+
 ## Installation
 
 This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
@@ -137,6 +158,8 @@ This project uses [uv](https://github.com/astral-sh/uv) for dependency managemen
    - Copy `.env.example` to `.env` and fill in your API keys.
    - Copy `projects.json.example` to `projects.json` and add your project paths.
 
+---
+
 ## Usage
 
 ### Manual Execution
@@ -150,12 +173,66 @@ uv run qdrant-sentinel
 pm2 start ecosystem.config.js
 ```
 
-### Monitoring and Debugging
+### Health Check
 
-The Sentinel provides detailed logging:
+Check the operational status of the Sentinel:
+
+```bash
+uv run qdrant-index health
+```
+
+Returns JSON output:
+```json
+{
+  "status": "healthy",
+  "qdrant": {
+    "status": "connected",
+    "url": "http://localhost:6333",
+    "collections": 3
+  },
+  "openviking": {
+    "status": "available",
+    "cli_path": "ov"
+  },
+  "sqlite": {
+    "status": "ok",
+    "path": "/path/to/sentinel_state.db",
+    "mappings_count": 1234
+  },
+  "metrics": {
+    "successful_dual_writes": 4567,
+    "openviking_failures": 12,
+    "qdrant_rollbacks": 3
+  }
+}
+```
+
+---
+
+## Monitoring and Debugging
+
+### Structured Logging
+
+The Sentinel provides a comprehensive logging system with multiple levels:
+- **DEBUG**: Detailed diagnostic information
 - **INFO**: Normal operations (file changes, indexing progress)
-- **WARNING**: Configuration issues, skipped files
+- **WARNING**: Configuration issues, skipped files, graceful degradation events
 - **ERROR**: Critical failures (API errors, file access issues)
+
+### Log Format
+
+Configure log format via `LOG_FORMAT` environment variable:
+- `text`: Human-readable format (default)
+- `json`: Structured JSON format for log aggregators
+
+### Metrics
+
+The Sentinel tracks operational metrics:
+- `successful_dual_writes`: Count of successful dual-write operations
+- `openviking_failures`: Count of OpenViking failures (with graceful degradation)
+- `qdrant_rollbacks`: Count of Qdrant rollback operations (compensating transactions)
+
+Metrics are accessible via the health check command and can be exported to monitoring systems.
 
 ### Advanced Features
 
@@ -170,6 +247,27 @@ All TOML configuration files are written atomically using temporary files and at
 
 #### Dual-Write Pipeline
 The Sentinel atomically writes to both Qdrant and OpenViking for each indexed point. If OpenViking fails, the operation degrades gracefully (Qdrant write succeeds). If the SQLite mapping fails, both writes are rolled back to maintain consistency.
+
+#### Compensating Transactions
+If OpenViking fails after a successful Qdrant upsert, the Sentinel automatically executes a compensating `delete_point` operation on Qdrant to maintain data consistency across all systems.
+
+#### Graceful Degradation
+The Sentinel continues to operate if OpenViking is unavailable, falling back to Qdrant-only mode. Full recovery occurs automatically when OpenViking becomes available again.
+
+---
+
+## Unified MCP Server Integration
+
+For production-grade AI agent integration, see the [Unified Qdrant MCP Server specification](.PLAN/UNIFIED_MCP_SPEC.md).
+
+### Key Integration Points
+
+1. **Read-Only Access**: The Unified MCP Server reads from Qdrant, SQLite, and OpenViking without modifying data
+2. **Cross-Reference Mapping**: Uses SQLite `ov_mappings` table to link Qdrant IDs with OpenViking resources
+3. **Context Retrieval**: Leverages OpenViking's L0/L1/L2 context layers for comprehensive code understanding
+4. **Cache Configuration**: Default cache TTL of 300s (5 minutes) for OpenViking context
+
+---
 
 ## License
 
