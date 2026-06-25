@@ -1,4 +1,5 @@
 import os
+import sys
 # Fix OpenSSL uplink crash caused by AVG/Avast SSLKEYLOGFILE injection on Windows
 os.environ.pop('SSLKEYLOGFILE', None)
 
@@ -568,7 +569,253 @@ def get_status_report(qdrant_client, sqlite_conn):
     }
 
 
+def confirm_rebuild(stats: dict) -> bool:
+    """
+    Show rebuild confirmation prompt and get user confirmation.
+    
+    Args:
+        stats: Dictionary with statistics about data to be deleted
+            - qdrant_collections: Number of Qdrant collections
+            - sqlite_file_hashes: Number of file_hashes rows
+            - sqlite_ov_mappings: Number of ov_mappings rows
+            - openviking_resources: Number of OpenViking resources
+    
+    Returns:
+        True if user confirms, False otherwise
+    """
+    print("\n⚠️  WARNING: This will delete ALL indexed data!")
+    print(f"    - Qdrant collections: {stats.get('qdrant_collections', 0)}")
+    print(f"    - SQLite file_hashes: {stats.get('sqlite_file_hashes', 0)}")
+    print(f"    - SQLite ov_mappings: {stats.get('sqlite_ov_mappings', 0)}")
+    print(f"    - OpenViking resources: {stats.get('openviking_resources', 0)}")
+    print()
+    
+    response = input("Proceed? [y/N]: ").strip().lower()
+    return response == 'y'
+
+
+def create_backup() -> bool:
+    """
+    Create backup of SQLite database and Qdrant collections.
+    
+    Returns:
+        True if backup succeeded, asFalse otherwise
+    """
+    import shutil
+    from datetime import datetime
+    
+    try:
+        # Backup SQLite database
+        state_db_path = Path(STATE_DB_PATH)
+        if state_db_path.exists():
+            backup_path = state_db_path.with_suffix('.db.backup')
+            shutil.copy2(state_db_path, backup_path)
+            logger.info(f"✅ Backup created: {backup_path}")
+        else:
+            logger.warning(f"State DB not found: {state_db_path}")
+        
+        # TODO: Backup Qdrant collections (export snapshots)
+        # This requires Qdrant client access and snapshot export functionality
+        
+        return True
+    except Exception as e:
+        logger.error(f"Backup failed: {e}")
+        return False
+
+
+def restore_backup() -> bool:
+    """
+    Restore from backup if rebuild fails.
+    
+    Returns:
+        True if restore succeeded, False otherwise
+    """
+    import shutil
+    
+    try:
+        # Restore SQLite database
+        state_db_path = Path(STATE_DB_PATH)
+        backup_path = state_db_path.with_suffix('.db.backup')
+        
+        if backup_path.exists():
+            shutil.copy2(backup_path, state_db_path)
+            logger.info(f"✅ Backup restored: {state_db_path}")
+        else:
+            logger.error(f"Backup not found: {backup_path}")
+            return False
+        
+        # TODO: Restore Qdrant collections from backup
+        
+        return True
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        return False
+
+
+def rebuild_index(
+    project_name: Optional[str] = None,
+    backup: bool = False,
+    qdrant_only: bool = False,
+    dry_run: bool = False
+) -> bool:
+    """
+    Perform full rebuild of indexed data.
+    
+    Args:
+        project_name: Rebuild only specific project (None = all projects)
+        backup: Create backup before rebuild
+        qdrant_only: Rebuild only Qdrant (keep SQLite mappings)
+        dry_run: Show what will be deleted without deleting
+    
+    Returns:
+        True if rebuild succeeded, False otherwise
+    """
+    from qdrant_client import QdrantClient
+    from openviking_client import OpenVikingClient
+    
+    try:
+        # Initialize clients
+        qdrant_client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+        ov_client = OpenVikingClient()
+        
+        # Step 1: Gather statistics
+        collections = qdrant_client.get_collections().collections
+        if project_name:
+            collections = [c for c in collections if c.name == project_name]
+        
+        stats = {
+            'qdrant_collections': len(collections),
+            'sqlite_file_hashes': 0,
+            'sqlite_ov_mappings': 0,
+            'openviking_resources': 0
+        }
+        
+        with sqlite3.connect(STATE_DB_PATH) as conn:
+            cursor = conn.cursor()
+            
+            # Count file_hashes
+            cursor.execute("SELECT COUNT(*) FROM file_hashes")
+            stats['sqlite_file_hashes'] = cursor.fetchone()[0]
+            
+            # Count ov_mappings
+            cursor.execute("SELECT COUNT(*) FROM ov_mappings")
+            stats['sqlite_ov_mappings'] = cursor.fetchone()[0]
+        
+        # Count OpenViking resources (estimated)
+        try:
+            ov_resources = ov_client.find_resources("")
+            stats['openviking_resources'] = len(ov_resources)
+        except:
+            stats['openviking_resources'] = stats['sqlite_ov_mappings']  # Fallback estimate
+        
+        # Show dry-run info
+        if dry_run:
+            print("\n📋 DRY RUN - No changes will be made")
+            print(f"    - Qdrant collections to delete: {[c.name for c in collections]}")
+            print(f"    - SQLite file_hashes rows: {stats['sqlite_file_hashes']}")
+            print(f"    - SQLite ov_mappings rows: {stats['sqlite_ov_mappings']}")
+            print(f"    - OpenViking resources: {stats['openviking_resources']} (estimated)")
+            print()
+            
+            response = input("Proceed with actual rebuild? [y/N]: ").strip().lower()
+            if response != 'y':
+                print("❌ Rebuild cancelled by user")
+                return False
+            
+            # After confirmation, proceed with actual rebuild (dry_run=False)
+            dry_run = False
+        
+        # Step 2: Confirmation
+        if not confirm_rebuild(stats):
+            print("❌ Rebuild cancelled by user")
+            return False
+        
+        # Step 3: Backup (if requested)
+        if backup:
+            if not create_backup():
+                print("❌ Backup failed, aborting rebuild")
+                return False
+            print("✅ Backup created successfully")
+        
+        # Step 4: Delete old data
+        if not dry_run:
+            # Delete Qdrant collections
+            for collection in collections:
+                logger.info(f"Deleting Qdrant collection: {collection.name}")
+                qdrant_client.delete_collection(collection.name)
+            
+            # Clear SQLite tables (unless qdrant_only)
+            if not qdrant_only:
+                with sqlite3.connect(STATE_DB_PATH) as conn:
+                    cursor = conn.cursor()
+                    
+                    if project_name:
+                        cursor.execute("DELETE FROM file_hashes WHERE project = ?", (project_name,))
+                        cursor.execute("DELETE FROM ov_mappings WHERE project = ?", (project_name,))
+                    else:
+                        cursor.execute("DELETE FROM file_hashes")
+                        cursor.execute("DELETE FROM ov_mappings")
+                    
+                    conn.commit()
+                    logger.info("✅ Cleared SQLite tables")
+            
+            logger.info(f"✅ Deleted Qdrant collections: {len(collections)}")
+        
+        # Step 5: Rescan and Reindex
+        config_path = Path(__file__).parent / "projects.json"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            watch_paths = config.get("watch_paths", [])
+            
+            if project_name:
+                watch_paths = [wp for wp in watch_paths if wp.get("name") == project_name]
+            
+            sentinel = QdrantSentinel(watch_paths)
+            sentinel.initial_scan()
+            
+            logger.info(f"✅ Reindexing {len(watch_paths)} project(s)")
+        
+        print("✅ Rebuild complete!")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Rebuild failed: {e}")
+        
+        # Rollback if backup exists
+        if backup:
+            print("Attempting rollback from backup...")
+            if restore_backup():
+                print("✅ Rollback successful")
+            else:
+                print("❌ Rollback failed")
+        
+        return False
+
+
 def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Qdrant Sentinel - Code Indexer")
+    parser.add_argument("--rebuild", action="store_true", help="Full rebuild of index")
+    parser.add_argument("--project", type=str, help="Rebuild specific project only")
+    parser.add_argument("--backup", action="store_true", help="Create backup before rebuild")
+    parser.add_argument("--qdrant-only", action="store_true", help="Rebuild only Qdrant (keep SQLite)")
+    parser.add_argument("--dry-run", action="store_true", help="Show what will be deleted")
+    
+    args = parser.parse_args()
+    
+    # Handle rebuild command
+    if args.rebuild:
+        success = rebuild_index(
+            project_name=args.project,
+            backup=args.backup,
+            qdrant_only=args.qdrant_only,
+            dry_run=args.dry_run
+        )
+        sys.exit(0 if success else 1)
+    
+    # Normal operation
     # Load configuration from projects.json
     config_path = Path(__file__).parent / "projects.json"
     if config_path.exists():
