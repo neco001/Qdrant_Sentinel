@@ -1,6 +1,8 @@
 import subprocess
 import json
 import logging
+import os
+import shutil
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -33,12 +35,31 @@ class OpenVikingClient:
             stdout string if successful, None if failed.
         """
         try:
+            # Prepare environment with augmented PATH for Windows npm global packages
+            env = os.environ.copy()
+            if os.name == 'nt':
+                npm_global = os.path.join(os.environ.get('APPDATA', ''), 'npm')
+                if os.path.exists(npm_global) and npm_global not in env.get('PATH', ''):
+                    env['PATH'] = f"{npm_global};{env.get('PATH', '')}"
+                    logger.debug(f"Augmented PATH with npm global directory: {npm_global}")
+            
+            # Resolve executable path on Windows (handle .cmd/.bat files)
+            cli_path = self.cli_path
+            if os.name == 'nt':
+                resolved = shutil.which(self.cli_path)
+                if resolved:
+                    cli_path = resolved
+                    logger.debug(f"Resolved OpenViking CLI: {cli_path}")
+                else:
+                    logger.warning(f"Could not resolve OpenViking CLI: {self.cli_path}")
+            
             result = subprocess.run(
-                [self.cli_path] + args,
+                [cli_path] + args,
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=timeout
+                timeout=timeout,
+                env=env
             )
             return result.stdout.strip()
         except FileNotFoundError:
@@ -59,32 +80,37 @@ class OpenVikingClient:
             return None
 
     def add_resource(
-        self, name: str, resource_type: str, tags: Optional[List[str]] = None
+        self, path: str, wait: bool = False, timeout: int = 30
     ) -> Optional[str]:
         """
         Add a resource using the ov CLI.
 
         Args:
-            name: Name of the resource.
-            resource_type: Type of the resource.
-            tags: Optional list of tags.
+            path: Local path or URL to import.
+            wait: Whether to wait until processing is complete.
+            timeout: Seconds to wait before timing out.
 
         Returns:
             Resource ID string if successful, None otherwise.
         """
-        args = ["add", name, "--type", resource_type]
+        args = ["add-resource", path]
         
-        if tags:
-            args.extend(["--tags", ",".join(tags)])
+        if wait:
+            args.append("--wait")
 
-        output = self._run_command(args)
+        output = self._run_command(args, timeout=timeout)
         
         if output:
             try:
-                # Assuming the CLI returns the ID directly or in a JSON format
-                # Adjust parsing logic based on actual CLI output format
+                # Parse JSON output to extract resource ID
                 data = json.loads(output)
-                return data.get("id") or data.get("resource_id")
+                # OpenViking may return the ID in various formats
+                if isinstance(data, dict):
+                    return data.get("id") or data.get("temp_file_id") or data.get("resource_id") or data.get("uri")
+                elif isinstance(data, list) and len(data) > 0:
+                        return data[0].get("id") or data[0].get("temp_file_id") or data[0].get("resource_id")
+                else:
+                    return str(data)
             except json.JSONDecodeError:
                 # Fallback: if output is not JSON, assume it is the ID itself
                 return output

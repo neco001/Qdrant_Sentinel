@@ -16,6 +16,10 @@ dependencies = [
     "tree-sitter==0.21.3",
     "tree-sitter-languages==1.10.2",
     "tomli-w>=1.2.0",
+    "tomli>=2.0.0",
+    "mcp>=1.28.0",
+    "openviking>=0.1.18",
+    "pytest-asyncio>=1.4.0",
 ]
 readme = "README.md"
 requires-python = ">=3.12, <3.13"

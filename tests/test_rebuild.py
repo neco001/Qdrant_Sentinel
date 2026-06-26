@@ -13,17 +13,23 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import shutil
+import json
 
 
 @pytest.fixture
 def mock_qdrant_client():
     """Mock Qdrant client."""
     client = MagicMock()
-    client.get_collections.return_value = MagicMock(collections=[
-        MagicMock(name="project-a-mycorp"),
-        MagicMock(name="project-b-tools"),
-        MagicMock(name="project-c-utils")
-    ])
+    
+    # Create mock collections with actual name attributes
+    col1 = MagicMock()
+    col1.name = "project-a-mycorp"
+    col2 = MagicMock()
+    col2.name = "project-b-tools"
+    col3 = MagicMock()
+    col3.name = "project-c-utils"
+    
+    client.get_collections.return_value = MagicMock(collections=[col1, col2, col3])
     client.delete_collection.return_value = None
     return client
 
@@ -34,14 +40,26 @@ def mock_sqlite_conn():
     conn = MagicMock()
     cursor = MagicMock()
     cursor.execute.return_value = None
-    cursor.fetchone.return_value = (1234,)  # file_hashes count
+    
+    # Mock different queries to return different values
+    def mock_execute(query, *args):
+        if "SELECT COUNT(*) FROM file_states" in query:
+            cursor.fetchone.return_value = (1234,)
+        elif "SELECT COUNT(*) FROM ov_mappings" in query:
+            cursor.fetchone.return_value = (1234,)
+        else:
+            cursor.fetchone.return_value = (0,)
+    
+    cursor.execute.side_effect = mock_execute
     cursor.fetchall.return_value = [
         ("qdrant_id_1", "ov_resource_1", "path1.py"),
         ("qdrant_id_2", "ov_resource_2", "path2.py"),
     ]
     conn.cursor.return_value = cursor
     conn.commit.return_value = None
-    return conn
+    conn.__enter__ = MagicMock(return_value=conn)
+    conn.__exit__ = MagicMock(return_value=False)
+    return cursor, conn
 
 
 @pytest.fixture
@@ -69,8 +87,9 @@ class TestRebuildDryRun:
         self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client
     ):
         """Verify dry-run mode doesn't delete Qdrant collections."""
+        cursor, conn = mock_sqlite_conn
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
              patch('sentinel.confirm_rebuild', return_value=True):
             
@@ -83,7 +102,7 @@ class TestRebuildDryRun:
             
             # Verify execute DELETE was NOT called
             delete_calls = [
-                call for call in mock_sqlite_conn.cursor().execute.call_args_list
+                call for call in cursor.execute.call_args_list
                 if 'DELETE' in str(call).upper()
             ]
             assert len(delete_calls) == 0, "No DELETE queries should be executed in dry-run"
@@ -95,8 +114,9 @@ class TestRebuildDryRun:
         self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client, caplog
     ):
         """Verify dry-run mode shows statistics without modifying data."""
+        cursor, conn = mock_sqlite_conn
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
              patch('sentinel.confirm_rebuild', return_value=True):
             
@@ -107,8 +127,8 @@ class TestRebuildDryRun:
             # Verify collections were listed (read-only)
             mock_qdrant_client.get_collections.assert_called_once()
             
-            # Verify file_hashes were counted (read-only)
-            mock_sqlite_conn.cursor().execute.assert_any_call("SELECT COUNT(*) FROM file_hashes")
+            # Verify file_states were counted (read-only)
+            assert any("SELECT COUNT(*) FROM file_states" in str(call) for call in cursor.execute.call_args_list)
             
             assert result is True
 
@@ -120,15 +140,19 @@ class TestRebuildBackup:
         self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client, temp_dir
     ):
         """Verify backup file is created when backup=True."""
+        cursor, conn = mock_sqlite_conn
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
              patch('sentinel.confirm_rebuild', return_value=True), \
              patch('sentinel.STATE_DB_PATH', str(temp_dir / "sentinel_state.db")):
             
-            # Create dummy state db
+            # Create real SQLite database
             state_db = temp_dir / "sentinel_state.db"
-            state_db.write_text("dummy data")
+            with sqlite3.connect(str(state_db)) as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS test (id INTEGER)")
+                conn.execute("INSERT INTO test VALUES (1)")
+                conn.commit()
             
             from sentinel import rebuild_index
             
@@ -144,8 +168,9 @@ class TestRebuildBackup:
         self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client, temp_dir
     ):
         """Verify backup contains data from original database."""
+        cursor, conn = mock_sqlite_conn
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
              patch('sentinel.confirm_rebuild', return_value=True), \
              patch('sentinel.STATE_DB_PATH', str(temp_dir / "sentinel_state.db")):
@@ -175,8 +200,9 @@ class TestRebuildRollback:
         # Make delete_collection fail
         mock_qdrant_client.delete_collection.side_effect = Exception("Qdrant error")
         
+        cursor, conn = mock_sqlite_conn
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
              patch('sentinel.confirm_rebuild', return_value=True), \
              patch('sentinel.STATE_DB_PATH', str(temp_dir / "sentinel_state.db")):
@@ -201,26 +227,30 @@ class TestRebuildRollback:
         self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client, temp_dir
     ):
         """Verify backup is restored if SQLite rebuild fails."""
-        # Make execute fail on DELETE
-        cursor = mock_sqlite_conn.cursor()
-        original_execute = cursor.execute
+        cursor, conn = mock_sqlite_conn
         
+        # Make execute fail
         def failing_execute(query, *args):
-            if 'DELETE' in str(query).upper():
-                raise sqlite3.Error("SQLite error")
-            return original_execute(query, *args)
+            if 'DELETE' in query.upper():
+                raise Exception("SQLite error")
+            # Mock count queries
+            if "SELECT COUNT(*) FROM file_hashes" in query:
+                cursor.fetchone.return_value = (1234,)
+            elif "SELECT COUNT(*) FROM ov_mappings" in query:
+                cursor.fetchone.return_value = (1234,)
         
         cursor.execute.side_effect = failing_execute
         
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
              patch('sentinel.confirm_rebuild', return_value=True), \
              patch('sentinel.STATE_DB_PATH', str(temp_dir / "sentinel_state.db")):
             
-            # Create state db
+            # Create state db with content
             state_db = temp_dir / "sentinel_state.db"
-            state_db.write_text("original content")
+            original_content = "original database content"
+            state_db.write_text(original_content)
             
             from sentinel import rebuild_index
             
@@ -228,35 +258,81 @@ class TestRebuildRollback:
             
             # Verify rebuild failed
             assert result is False
+            
+            # Verify backup file exists (created before failure)
+            backup_file = temp_dir / "sentinel_state.db.backup"
+            assert backup_file.exists()
 
 
 class TestRebuildProjectSpecific:
     """Test project-specific rebuild functionality."""
 
     def test_rebuild_project_specific_filters_collections(
-        self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client
+        self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client, temp_dir
     ):
         """Verify only specified project's collection is rebuilt."""
+        cursor, conn = mock_sqlite_conn
+        
+        # Create mock projects.json
+        projects_json = temp_dir / "projects.json"
+        projects_json.write_text(json.dumps({
+            "watch_paths": [
+                "C:/projects/mycorp",
+                "C:/projects/tools",
+                "C:/projects/utils"
+            ]
+        }))
+        
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
-             patch('sentinel.confirm_rebuild', return_value=True):
+             patch('sentinel.confirm_rebuild', return_value=True), \
+             patch('sentinel.Path') as mock_path:
+            
+            # Make Path return temp_dir for projects.json
+            original_path = Path
+            def path_side_effect(*args, **kwargs):
+                if args and args[0].endswith('projects.json'):
+                    return projects_json
+                return original_path(*args, **kwargs)
+            mock_path.side_effect = path_side_effect
             
             from sentinel import rebuild_index
             
             rebuild_index(project_name="project-a-mycorp")
             
-            # Verify only project-a collection was deleted
+            # Verify only project-a-mycorp collection was deleted
             mock_qdrant_client.delete_collection.assert_called_once_with("project-a-mycorp")
 
     def test_rebuild_project_specific_filters_sqlite_queries(
-        self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client
+        self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client, temp_dir
     ):
         """Verify SQLite queries are filtered by project name."""
+        cursor, conn = mock_sqlite_conn
+        
+        # Create mock projects.json
+        projects_json = temp_dir / "projects.json"
+        projects_json.write_text(json.dumps({
+            "watch_paths": [
+                "C:/projects/mycorp",
+                "C:/projects/tools",
+                "C:/projects/utils"
+            ]
+        }))
+        
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
-             patch('sentinel.confirm_rebuild', return_value=True):
+             patch('sentinel.confirm_rebuild', return_value=True), \
+             patch('sentinel.Path') as mock_path:
+            
+            # Make Path return temp_dir for projects.json
+            original_path = Path
+            def path_side_effect(*args, **kwargs):
+                if args and args[0].endswith('projects.json'):
+                    return projects_json
+                return original_path(*args, **kwargs)
+            mock_path.side_effect = path_side_effect
             
             from sentinel import rebuild_index
             
@@ -264,7 +340,7 @@ class TestRebuildProjectSpecific:
             
             # Verify DELETE queries include project filter
             delete_calls = [
-                str(call) for call in mock_sqlite_conn.cursor().execute.call_args_list
+                str(call) for call in cursor.execute.call_args_list
                 if 'DELETE' in str(call).upper()
             ]
             
@@ -276,8 +352,9 @@ class TestRebuildProjectSpecific:
         self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client
     ):
         """Verify all collections are deleted when no project specified."""
+        cursor, conn = mock_sqlite_conn
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
              patch('sentinel.confirm_rebuild', return_value=True):
             
@@ -299,7 +376,7 @@ class TestConfirmRebuild:
             
             stats = {
                 'qdrant_collections': 3,
-                'sqlite_file_hashes': 1234,
+                'sqlite_file_states': 1234,
                 'sqlite_ov_mappings': 1234,
                 'openviking_resources': 1234
             }
@@ -314,7 +391,7 @@ class TestConfirmRebuild:
             
             stats = {
                 'qdrant_collections': 3,
-                'sqlite_file_hashes': 1234,
+                'sqlite_file_states': 1234,
                 'sqlite_ov_mappings': 1234,
                 'openviking_resources': 1234
             }
@@ -329,7 +406,7 @@ class TestConfirmRebuild:
             
             stats = {
                 'qdrant_collections': 3,
-                'sqlite_file_hashes': 1234,
+                'sqlite_file_states': 1234,
                 'sqlite_ov_mappings': 1234,
                 'openviking_resources': 1234
             }
@@ -337,9 +414,9 @@ class TestConfirmRebuild:
             confirm_rebuild(stats)
             
             captured = capsys.readouterr()
-            assert 'WARNING' in captured.out
-            assert '3' in captured.out
-            assert '1234' in captured.out
+            assert '⚠️  WARNING' in captured.out
+            assert 'Qdrant collections: 3' in captured.out
+            assert 'SQLite file_states: 1234' in captured.out
 
 
 class TestQdrantOnly:
@@ -349,8 +426,9 @@ class TestQdrantOnly:
         self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client
     ):
         """Verify SQLite tables are not cleared when qdrant_only=True."""
+        cursor, conn = mock_sqlite_conn
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
-             patch('sentinel.get_db_connection', return_value=mock_sqlite_conn), \
+             patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
              patch('sentinel.confirm_rebuild', return_value=True):
             
@@ -359,11 +437,11 @@ class TestQdrantOnly:
             rebuild_index(qdrant_only=True)
             
             # Verify Qdrant collections were deleted
-            assert mock_qdrant_client.delete_collection.call_count > 0
+            assert mock_qdrant_client.delete_collection.call_count == 3
             
             # Verify SQLite DELETE was NOT called
             delete_calls = [
-                call for call in mock_sqlite_conn.cursor().execute.call_args_list
+                call for call in cursor.execute.call_args_list
                 if 'DELETE' in str(call).upper()
             ]
-            assert len(delete_calls) == 0, "SQLite should not be cleared with qdrant_only=True"
+            assert len(delete_calls) == 0, "No DELETE queries should be executed in qdrant_only mode"

@@ -1,0 +1,28 @@
+# Qdrant Index Configuration
+# This file is shared between sentinel.py and MCP server
+# CRITICAL: Embeddings configuration MUST match between sentinel and MCP
+# to ensure vector search queries work correctly
+
+[qdrant]
+# Qdrant server URL
+url = "http://localhost:6333"
+
+[embeddings]
+# Embedding API configuration - MUST be identical in sentinel.py and MCP server
+# Used by sentinel.py to generate embeddings during indexing
+# Used by MCP server to generate embeddings for search queries
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+model_name = "text-embedding-v4"
+dimension = 1024
+
+[openviking]
+# OpenViking CLI configuration
+# OpenViking does NOT use embeddings - it stores original content
+# and provides context layers (L0/L1/L2) for retrieved chunks
+cli_path = "ov"
+enabled = true
+
+[paths]
+# File system paths
+data_root = "."
+state_db = "sentinel_state.db"

@@ -31,9 +31,8 @@ class TestOpenVikingClient:
 
         client = OpenVikingClient()
         resource_id = client.add_resource(
-            name="test-resource",
-            resource_type="service",
-            tags=["test", "pytest"]
+            path="test-resource",
+            wait=False
         )
 
         assert resource_id == "resource-12345"
@@ -61,7 +60,7 @@ class TestOpenVikingClient:
         client = OpenVikingClient()
 
         # Should not crash, return None or empty result
-        resource_id = client.add_resource(name="test", resource_type="service")
+        resource_id = client.add_resource(path="test", wait=False)
         assert resource_id is None
 
         results = client.find_resources(query="test")
@@ -69,18 +68,18 @@ class TestOpenVikingClient:
 
     @patch('subprocess.run')
     def test_error_handling_subprocess_failure(self, mock_run):
-        """Test that subprocess failures are caught and ahandled gracefully."""
+        """Test that subprocess failures are caught and handled gracefully."""
         # Mock subprocess failure by raising CalledProcessError
         mock_run.side_effect = subprocess.CalledProcessError(
             returncode=1,
-            cmd=["ov", "add", "test", "--type", "invalid"],
+            cmd=["ov", "add-resource", "test"],
             stderr="Error: Invalid arguments\n"
         )
 
         client = OpenVikingClient()
 
         # Should not crash, return None
-        resource_id = client.add_resource(name="test", resource_type="invalid")
+        resource_id = client.add_resource(path="test", wait=False)
         assert resource_id is None
 
     @patch('subprocess.run')

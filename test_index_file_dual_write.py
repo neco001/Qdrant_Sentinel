@@ -12,16 +12,16 @@ def test_index_point_dual_write_success():
     mock_ov = MagicMock()
     mock_ov.add_resource.return_value = {'id': 'ov_123'}
     mock_conn = MagicMock()
-    
+
     # Create a test point
     point = {
         'id': 'test123',
         'vector': [0.1, 0.2, 0.3],
         'payload': {'text': 'test content', 'file_path': 'test.py'}
     }
-    
+
     # Call dual-write function
-    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn)
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn, 'test_collection')
     
     # Verify both were called
     assert mock_qdrant.upsert.call_count == 1, "Qdrant upsert should be called once"
@@ -40,16 +40,16 @@ def test_index_point_dual_write_openviking_fails_gracefully():
     mock_ov = MagicMock()
     mock_ov.add_resource.side_effect = Exception("OpenViking unavailable")
     mock_conn = MagicMock()
-    
+
     # Create a test point
     point = {
         'id': 'test123',
         'vector': [0.1, 0.2, 0.3],
         'payload': {'text': 'test content', 'file_path': 'test.py'}
     }
-    
+
     # Call dual-write function - should not raise exception
-    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn)
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn, 'test_collection')
     
     # Verify Qdrant was still called (graceful degradation)
     assert mock_qdrant.upsert.call_count == 1, "Qdrant upsert should still be called"
@@ -65,16 +65,16 @@ def test_index_point_dual_write_qdrant_fails_rolls_back():
     mock_qdrant.upsert.side_effect = Exception("Qdrant unavailable")
     mock_ov = MagicMock()
     mock_conn = MagicMock()
-    
+
     # Create a test point
     point = {
         'id': 'test123',
         'vector': [0.1, 0.2, 0.3],
         'payload': {'text': 'test content', 'file_path': 'test.py'}
     }
-    
+
     # Call dual-write function
-    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn)
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn, 'test_collection')
     
     # Verify Qdrant was attempted
     assert mock_qdrant.upsert.call_count == 1, "Qdrant upsert should be attempted"
@@ -96,23 +96,47 @@ def test_index_point_dual_write_stores_mapping():
     mock_ov = MagicMock()
     mock_ov.add_resource.return_value = {'id': 'ov_123'}
     mock_conn = MagicMock()
-    
+
     # Create a test point
     point = {
         'id': 'qdrant_id_123',
         'vector': [0.1, 0.2, 0.3],
         'payload': {'text': 'test content', 'file_path': 'test.py'}
     }
-    
+
     # Call dual-write function
-    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn)
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn, 'test_collection')
     
-    # Verify SQLite insert was called to store mapping
-    assert mock_conn.execute.call_count > 0, "SQLite execute should be called"
+    # Verify SQLite insert was called
+    mock_conn.execute.assert_called_once()
+    call_args = mock_conn.execute.call_args[0]
+    assert 'INSERT INTO ov_mappings' in call_args[0]
+    assert 'ov_123' in call_args[1]
+
+
+def test_index_point_dual_write_openviking_returns_none():
+    """Test that when OpenViking returns None, SQLite insert is skipped (prevents NOT NULL violation)."""
+    # Setup mocks
+    mock_qdrant = MagicMock()
+    mock_ov = MagicMock()
+    mock_ov.add_resource.return_value = None  # OpenViking returns None
+    mock_conn = MagicMock()
+
+    # Create a test point
+    point = {
+        'id': 'qdrant_id_456',
+        'vector': [0.1, 0.2, 0.3],
+        'payload': {'text': 'test content', 'file_path': 'test.py'}
+    }
+
+    # Call dual-write function - should not raise exception
+    result = index_point_dual_write(point, mock_qdrant, mock_ov, mock_conn, 'test_collection')
     
-    # Check that the insert was for the mapping table
-    insert_calls = [str(call) for call in mock_conn.execute.call_args_list]
-    assert any('INSERT INTO ov_mappings' in str(call) for call in insert_calls), \
-        "Should insert into ov_mappings table"
+    # Verify Qdrant upsert was called
+    mock_qdrant.upsert.assert_called_once()
     
-    assert result is True, "Dual-write should return True on success"
+    # Verify SQLite insert was NOT called (because ov_id is None)
+    mock_conn.execute.assert_not_called()
+    
+    # Verify function returns True (Qdrant succeeded, OpenViking failed gracefully)
+    assert result is True

@@ -78,7 +78,8 @@ class TestDualWritePipeline:
                 point=sample_point,
                 qdrant_client=mock_qdrant_client,
                 ov_client=mock_openviking_client,
-                conn=mock_sqlite_conn
+                conn=mock_sqlite_conn,
+                collection_name='test_collection'
             )
         
         # Verify Qdrant upsert was called
@@ -107,7 +108,8 @@ class TestDualWritePipeline:
                 point=sample_point,
                 qdrant_client=mock_qdrant_client,
                 ov_client=mock_openviking_client,
-                conn=mock_sqlite_conn
+                conn=mock_sqlite_conn,
+                collection_name='test_collection'
             )
         
         # Verify Qdrant still succeeded
@@ -138,7 +140,8 @@ class TestDualWritePipeline:
                     point=sample_point,
                     qdrant_client=mock_qdrant_client,
                     ov_client=mock_openviking_client,
-                    conn=mock_sqlite_conn
+                    conn=mock_sqlite_conn,
+                    collection_name='test_collection'
                 )
         
         # Verify OpenViking was called (before SQLite failure)

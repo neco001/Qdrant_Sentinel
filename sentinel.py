@@ -8,6 +8,8 @@ import hashlib
 import sqlite3
 import json
 import logging
+import asyncio
+import signal
 from pathlib import Path
 from typing import List, Set, Dict, Any, Optional
 from watchdog.observers import Observer
@@ -20,6 +22,15 @@ from tqdm import tqdm
 import pathspec
 import uuid
 import tomli_w
+import threading
+import process_manager
+
+# Global shutdown flag for PM2 compatibility
+shutdown_flag = False
+manager = None  # Global reference to OpenVikingManager for signal handler
+
+# Global rate limiter for embedding API (max 2 concurrent requests)
+EMBEDDING_SEMAPHORE = threading.Semaphore(2)
 
 logger = logging.getLogger(__name__)
 import os
@@ -31,13 +42,42 @@ from openviking_client import OpenVikingClient
 # Load environment variables
 load_dotenv()
 
-# Configuration
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY")
-EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
-STATE_DB_PATH = "sentinel_state.db"
+def _load_from_env() -> tuple:
+    """Load configuration from environment variables as fallback."""
+    return (
+        os.getenv("QDRANT_URL", "http://localhost:6333"),
+        os.getenv("EMBEDDING_API_KEY"),
+        os.getenv("EMBEDDING_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+        os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4kt"),
+        "sentinel_state.db",
+        None
+    )
 
+# Configuration
+try:
+    from shared_config import load_config, ConfigurationError
+    
+    config = load_config()
+    
+    # Load from config file with fallback to environment variables
+    QDRANT_URL = config.qdrant.url if hasattr(config, 'qdrant') else os.getenv("QDRANT_URL", "http://localhost:6333")
+    EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY")  # Always from environment for security
+    EMBEDDING_BASE_URL = config.embeddings.base_url if hasattr(config, 'embeddings') else os.getenv("EMBEDDING_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+    EMBEDDING_MODEL_NAME = config.embeddings.model_name if hasattr(config, 'embeddings') else os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
+    STATE_DB_PATH = config.paths.state_db if hasattr(config, 'paths') else "sentinel_state.db"
+    
+    # Expose config as module-level attribute for backward compatibility
+    _config = config
+    
+except ImportError:
+    # Fallback to environment variables if shared_config is not available
+    logger.warning("shared_config module not found, using environment variables")
+    QDRANT_URL, EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_MODEL_NAME, STATE_DB_PATH, _config = _load_from_env()
+
+except ConfigurationError as e:
+    # Fallback to environment variables if configuration fails
+    logger.warning(f"Configuration error: {e}, using environment variables")
+    QDRANT_URL, EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_MODEL_NAME, STATE_DB_PATH, _config = _load_from_env()
 class QdrantSentinel:
     VECTOR_SIZE = 1024  # Explicit class-level constant (task 8 completion)
     AUTO_UPDATE_GITIGNORE = True  # Server-managed .gitignore updates (user-chosen Option A)
@@ -221,12 +261,19 @@ class QdrantSentinel:
 
             all_embeddings = []
             # Alibaba/OpenAI support batching multiple inputs in one request
-            for j in range(0, len(final_chunks), 50):
-                batch = [c.strip() for c in final_chunks[j:j+50] if c.strip()]
+            for j in range(0, len(final_chunks), 10):
+                batch = [c.strip() for c in final_chunks[j:j+10] if c.strip()]
                 if not batch: continue
                 
-                emb_res = self.ai_client.embeddings.create(input=batch, model=EMBEDDING_MODEL_NAME)
-                all_embeddings.extend([e.embedding for e in emb_res.data])
+                # Rate limiting: max 2 concurrent embedding requests
+                with EMBEDDING_SEMAPHORE:
+                    emb_res = self.ai_client.embeddings.create(
+                        input=batch,
+                        model=EMBEDDING_MODEL_NAME,
+                        dimensions=self.VECTOR_SIZE  # Ensure consistent dimension
+                    )
+                    all_embeddings.extend([e.embedding for e in emb_res.data])
+                    time.sleep(0.5)  # Rate limiting to avoid 429 errors
 
             # Clear old points for this file to prevent duplicates and orphaned chunks
             rel_path = str(file_path.relative_to(project_root))
@@ -260,20 +307,23 @@ class QdrantSentinel:
                             'payload': point.payload
                         }
                         # Call dual-write function (graceful degradation handled internally)
-                        index_point_dual_write(
+                        success = index_point_dual_write(
                             point=point_dict,
                             qdrant_client=self.client,
                             ov_client=self.ov_client,
-                            conn=conn
+                            conn=conn,
+                            collection_name=collection_name,
+                            project_root=project_root
                         )
+                        if not success:
+                            logger.error(f"Failed to index point for {file_path} in collection {collection_name}")
 
             with sqlite3.connect(STATE_DB_PATH) as conn:
                 conn.execute("INSERT OR REPLACE INTO file_states (file_path, hash, last_indexed, collection_name) VALUES (?, ?, ?, ?)",
                            (str(file_path), current_hash, time.time(), collection_name))
 
         except Exception as e:
-            # print(f"Error indexing {file_path}: {e}") # Keep it quiet in prod
-            pass
+            logger.error(f"Error indexing {file_path}: {e}")
 
     def write_qdrant_index(self, index_data: dict, output_path: str):
         """Atomic TOML write for qdrant_index.toml using tomli_w
@@ -371,6 +421,7 @@ class QdrantSentinel:
 
     def start_watching(self):
         """Start real-time monitoring."""
+        global shutdown_flag
         observer = Observer()
         handler = SentinelHandler(self)
         
@@ -386,7 +437,7 @@ class QdrantSentinel:
             try:
                 observer.start()
                 print(f"Sentinel is watching {active_watches} projects.")
-                while True:
+                while not shutdown_flag:
                     time.sleep(1)
             except Exception as e:
                 print(f"Critical error in observer: {e}")
@@ -427,7 +478,7 @@ def get_db_connection():
     return sqlite3.connect(STATE_DB_PATH)
 
 
-def index_point_dual_write(point: Dict[str, Any], qdrant_client, ov_client, conn) -> bool:
+def index_point_dual_write(point: Dict[str, Any], qdrant_client, ov_client, conn, collection_name: str, project_root: Optional[Path] = None) -> bool:
     """
     Upserts a point to Qdrant and OpenViking with transactional integrity.
     
@@ -436,6 +487,8 @@ def index_point_dual_write(point: Dict[str, Any], qdrant_client, ov_client, conn
         qdrant_client: Qdrant client instance
         ov_client: OpenViking client instance
         conn: SQLite connection for mapping storage
+        collection_name: Qdrant collection name to write to
+        project_root: Project root path for reconstructing absolute file paths
         
     Returns:
         bool: True if Qdrant succeeded (with or without OpenViking), False if Qdrant failed
@@ -444,50 +497,58 @@ def index_point_dual_write(point: Dict[str, Any], qdrant_client, ov_client, conn
     file_path = point['payload'].get('file_path', 'unknown')
     language = point['payload'].get('language', 'unknown')
     
-    # Step 1: Upsert to QQdrant
+    # Reconstruct absolute path for OpenViking if project_root is provided
+    ov_file_path = file_path
+    if project_root and not os.path.isabs(file_path):
+        ov_file_path = str(project_root / file_path)
+    
+    # Step 1: Upsert to Qdrant
     try:
         qdrant_client.upsert(
-            collection_name="code_index",
+            collection_name=collection_name,
             points=[point]
         )
     except Exception as qdrant_err:
-        logger.error(f"Qdrant upsert failed for {file_path}: {qdrant_err}")
+        logger.error(f"Qdrant upsert failed for {file_path} in collection {collection_name}: {qdrant_err}")
         return False
     
     # Step 2: Add to OpenViking
+    ov_id = None
     try:
         ov_response = ov_client.add_resource(
-            name=file_path,
-            resource_type='code',
-            tags=[language]
+            path=ov_file_path,
+            wait=False  # Don't wait for async processing to complete
         )
-        ov_id = ov_response.get('id') if isinstance(ov_response, dict) else ov_response
-        
-        # Step 3: Store mapping in SQLite
-        conn.execute(
-            "INSERT INTO ov_mappings (qdrant_id, ov_resource_id, file_path) VALUES (?, ?, ?)",
-            (qdrant_id, ov_id, file_path)
-        )
-        conn.commit()
-        return True
-        
-    except sqlite3.Error as db_err:
-        # SQLite insert failed - rollback both SQLite and Qdrant
-        logger.error(f"SQLite mapping failed, rolling back Qdrant point {qdrant_id}: {db_err}")
-        conn.rollback()
-        try:
-            qdrant_client.delete(
-                collection_name="code_index",
-                points_selector=[qdrant_id]
-            )
-        except Exception as delete_err:
-            logger.error(f"Failed to rollback Qdrant point {qdrant_id}: {delete_err}")
-        raise  # Re-raise to signal failure
+        # add_resource now returns a string ID directly, not a dict
+        ov_id = ov_response
     except Exception as ov_err:
-        logger.warning(f"OpenViking write failed for {file_path}: {ov_err}. Continuing with Qdrant-only.")
-        return True
-
-
+        logger.warning(f"OpenViking write failed for {ov_file_path}: {ov_err}. Continuing with Qdrant-only.")
+        return True  # Qdrant succeeded, OpenViking failed - this is acceptable
+    
+    # Step 3: Store mapping in SQLite (only if OpenViking succeeded and returned valid ID)
+    if ov_id is not None:
+        try:
+            conn.execute(
+                "INSERT INTO ov_mappings (qdrant_id, ov_resource_id, file_path) VALUES (?, ?, ?)",
+                (qdrant_id, ov_id, file_path)
+            )
+            conn.commit()
+        except sqlite3.Error as db_err:
+            # SQLite insert failed - rollback both SQLite and Qdrant
+            logger.error(f"SQLite mapping failed, rolling back Qdrant point {qdrant_id}: {db_err}")
+            conn.rollback()
+            try:
+                qdrant_client.delete(
+                    collection_name=collection_name,
+                    points_selector=[qdrant_id]
+                )
+            except Exception as delete_err:
+                logger.error(f"Failed to rollback Qdrant point {qdrant_id}: {delete_err}")
+            raise  # Re-raise to signal failure
+    else:
+        logger.warning(f"OpenViking returned None for {file_path}. Skipping SQLite mapping. Qdrant-only mode.")
+    
+    return True
 def get_ov_mapping(qdrant_id: str, conn) -> Optional[str]:
     """
     Retrieve OpenViking resource ID by Qdrant point ID.
@@ -526,6 +587,16 @@ def get_qdrant_mapping(ov_resource_id: str, conn) -> Optional[str]:
     )
     result = cursor.fetchone()
     return result[0] if result and len(result) > 0 else None
+
+
+def get_qdrant_client():
+    """Get Qdrant client instance (helper for testing)."""
+    return QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+
+
+def get_db_connection():
+    """Get SQLite database connection (helper for testing)."""
+    return sqlite3.connect(STATE_DB_PATH)
 
 
 def get_status_report(qdrant_client, sqlite_conn):
@@ -585,7 +656,7 @@ def confirm_rebuild(stats: dict) -> bool:
     """
     print("\n⚠️  WARNING: This will delete ALL indexed data!")
     print(f"    - Qdrant collections: {stats.get('qdrant_collections', 0)}")
-    print(f"    - SQLite file_hashes: {stats.get('sqlite_file_hashes', 0)}")
+    print(f"    - SQLite file_states: {stats.get('sqlite_file_states', 0)}")
     print(f"    - SQLite ov_mappings: {stats.get('sqlite_ov_mappings', 0)}")
     print(f"    - OpenViking resources: {stats.get('openviking_resources', 0)}")
     print()
@@ -608,7 +679,7 @@ def create_backup() -> bool:
         # Backup SQLite database
         state_db_path = Path(STATE_DB_PATH)
         if state_db_path.exists():
-            backup_path = state_db_path.with_suffix('.db.backup')
+            backup_path = state_db_path.with_suffix(state_db_path.suffix + '.backup')
             shutil.copy2(state_db_path, backup_path)
             logger.info(f"✅ Backup created: {backup_path}")
         else:
@@ -635,7 +706,7 @@ def restore_backup() -> bool:
     try:
         # Restore SQLite database
         state_db_path = Path(STATE_DB_PATH)
-        backup_path = state_db_path.with_suffix('.db.backup')
+        backup_path = state_db_path.with_suffix(state_db_path.suffix + '.backup')
         
         if backup_path.exists():
             shutil.copy2(backup_path, state_db_path)
@@ -656,7 +727,8 @@ def rebuild_index(
     project_name: Optional[str] = None,
     backup: bool = False,
     qdrant_only: bool = False,
-    dry_run: bool = False
+    dry_run: bool = False,
+    skip_confirmation: bool = False
 ) -> bool:
     """
     Perform full rebuild of indexed data.
@@ -666,6 +738,7 @@ def rebuild_index(
         backup: Create backup before rebuild
         qdrant_only: Rebuild only Qdrant (keep SQLite mappings)
         dry_run: Show what will be deleted without deleting
+        skip_confirmation: Skip confirmation prompt (for automation)
     
     Returns:
         True if rebuild succeeded, False otherwise
@@ -674,8 +747,8 @@ def rebuild_index(
     from openviking_client import OpenVikingClient
     
     try:
-        # Initialize clients
-        qdrant_client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+        # Initialize clients (using helper functions for testability)
+        qdrant_client = get_qdrant_client()
         ov_client = OpenVikingClient()
         
         # Step 1: Gather statistics
@@ -685,17 +758,17 @@ def rebuild_index(
         
         stats = {
             'qdrant_collections': len(collections),
-            'sqlite_file_hashes': 0,
+            'sqlite_file_states': 0,
             'sqlite_ov_mappings': 0,
             'openviking_resources': 0
         }
         
-        with sqlite3.connect(STATE_DB_PATH) as conn:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Count file_hashes
-            cursor.execute("SELECT COUNT(*) FROM file_hashes")
-            stats['sqlite_file_hashes'] = cursor.fetchone()[0]
+            # Count file_states
+            cursor.execute("SELECT COUNT(*) FROM file_states")
+            stats['sqlite_file_states'] = cursor.fetchone()[0]
             
             # Count ov_mappings
             cursor.execute("SELECT COUNT(*) FROM ov_mappings")
@@ -708,25 +781,18 @@ def rebuild_index(
         except:
             stats['openviking_resources'] = stats['sqlite_ov_mappings']  # Fallback estimate
         
-        # Show dry-run info
+        # Show dry-run info and return early
         if dry_run:
             print("\n📋 DRY RUN - No changes will be made")
             print(f"    - Qdrant collections to delete: {[c.name for c in collections]}")
-            print(f"    - SQLite file_hashes rows: {stats['sqlite_file_hashes']}")
+            print(f"    - SQLite file_states rows: {stats['sqlite_file_states']}")
             print(f"    - SQLite ov_mappings rows: {stats['sqlite_ov_mappings']}")
             print(f"    - OpenViking resources: {stats['openviking_resources']} (estimated)")
             print()
-            
-            response = input("Proceed with actual rebuild? [y/N]: ").strip().lower()
-            if response != 'y':
-                print("❌ Rebuild cancelled by user")
-                return False
-            
-            # After confirmation, proceed with actual rebuild (dry_run=False)
-            dry_run = False
+            return True  # Dry-run successful
         
         # Step 2: Confirmation
-        if not confirm_rebuild(stats):
+        if not skip_confirmation and not confirm_rebuild(stats):
             print("❌ Rebuild cancelled by user")
             return False
         
@@ -738,28 +804,27 @@ def rebuild_index(
             print("✅ Backup created successfully")
         
         # Step 4: Delete old data
-        if not dry_run:
-            # Delete Qdrant collections
-            for collection in collections:
-                logger.info(f"Deleting Qdrant collection: {collection.name}")
-                qdrant_client.delete_collection(collection.name)
-            
-            # Clear SQLite tables (unless qdrant_only)
-            if not qdrant_only:
-                with sqlite3.connect(STATE_DB_PATH) as conn:
-                    cursor = conn.cursor()
-                    
-                    if project_name:
-                        cursor.execute("DELETE FROM file_hashes WHERE project = ?", (project_name,))
-                        cursor.execute("DELETE FROM ov_mappings WHERE project = ?", (project_name,))
-                    else:
-                        cursor.execute("DELETE FROM file_hashes")
-                        cursor.execute("DELETE FROM ov_mappings")
-                    
-                    conn.commit()
-                    logger.info("✅ Cleared SQLite tables")
-            
-            logger.info(f"✅ Deleted Qdrant collections: {len(collections)}")
+        # Delete Qdrant collections
+        for collection in collections:
+            logger.info(f"Deleting Qdrant collection: {collection.name}")
+            qdrant_client.delete_collection(collection.name)
+        
+        # Clear SQLite tables (unless qdrant_only)
+        if not qdrant_only:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                if project_name:
+                    cursor.execute("DELETE FROM file_states WHERE collection_name LIKE ?", (f"%{project_name}%",))
+                    cursor.execute("DELETE FROM ov_mappings WHERE file_path LIKE ?", (f"%{project_name}%",))
+                else:
+                    cursor.execute("DELETE FROM file_states")
+                    cursor.execute("DELETE FROM ov_mappings")
+                
+                conn.commit()
+                logger.info("✅ Cleared SQLite tables")
+        
+        logger.info(f"✅ Deleted Qdrant collections: {len(collections)}")
         
         # Step 5: Rescan and Reindex
         config_path = Path(__file__).parent / "projects.json"
@@ -769,7 +834,12 @@ def rebuild_index(
             watch_paths = config.get("watch_paths", [])
             
             if project_name:
-                watch_paths = [wp for wp in watch_paths if wp.get("name") == project_name]
+                # Filter watch_paths by matching collection name
+                # Collection name is derived from path: "project-{path.name.lower()}"
+                watch_paths = [
+                    wp for wp in watch_paths
+                    if f"project-{Path(wp).name.lower()}" == project_name
+                ]
             
             sentinel = QdrantSentinel(watch_paths)
             sentinel.initial_scan()
@@ -793,8 +863,52 @@ def rebuild_index(
         return False
 
 
-def main():
+async def signal_handler(sig_num=None):
+    """Signal handler for SIGTERM/SIGINT - graceful shutdown for PM2 compatibility."""
+    global shutdown_flag, manager
+    
+    # Early return if already shutting down to prevent race condition
+    if shutdown_flag:
+        return
+    
+    shutdown_flag = True
+    signal_name = signal.Signals(sig_num).name if sig_num else "UNKNOWN"
+    logger.info(f"Shutdown signal ({signal_name}) received - initiating graceful shutdown")
+    
+    # Stop OpenViking server if running
+    if manager is not None:
+        try:
+            await manager.stop()
+            logger.info("OpenViking server stopped due to signal")
+        except Exception as e:
+            logger.error(f"Error stopping OpenViking server: {e}")
+
+
+async def async_main():
+    """Async main function with OpenVikingManager lifecycle management."""
     import argparse
+    global manager, shutdown_flag
+    
+    # Get event loop and register signal handlers
+    loop = asyncio.get_event_loop()
+    
+    # Register signal handlers for PM2 compatibility
+    try:
+        loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(signal_handler(signal.SIGTERM)))
+        loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(signal_handler(signal.SIGINT)))
+    except NotImplementedError:
+        # Windows doesn't support add_signal_handler, use alternative approach
+        logger.warning("Signal handlers not supported on this platform - using atexit handler")
+        import atexit
+        def windows_shutdown():
+            global manager
+            if manager is not None:
+                try:
+                    asyncio.run(manager.stop())
+                    logger.info("OpenViking server stopped via atexit")
+                except Exception as e:
+                    logger.error(f"Error stopping OpenViking server: {e}")
+        atexit.register(windows_shutdown)
     
     parser = argparse.ArgumentParser(description="Qdrant Sentinel - Code Indexer")
     parser.add_argument("--rebuild", action="store_true", help="Full rebuild of index")
@@ -802,6 +916,7 @@ def main():
     parser.add_argument("--backup", action="store_true", help="Create backup before rebuild")
     parser.add_argument("--qdrant-only", action="store_true", help="Rebuild only Qdrant (keep SQLite)")
     parser.add_argument("--dry-run", action="store_true", help="Show what will be deleted")
+    parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
     
     args = parser.parse_args()
     
@@ -811,29 +926,86 @@ def main():
             project_name=args.project,
             backup=args.backup,
             qdrant_only=args.qdrant_only,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            skip_confirmation=args.yes
         )
         sys.exit(0 if success else 1)
     
-    # Normal operation
-    # Load configuration from projects.json
-    config_path = Path(__file__).parent / "projects.json"
-    if config_path.exists():
-        with open(config_path, 'r') as f:
-            config = json.load(f)
-        watch_paths = config.get("watch_paths", [])
-    else:
-        print("Error: projects.json not found.")
-        print("Please create projects.json based on projects.json.example")
-        return
-    
-    if not watch_paths:
-        print("Error: No watch_paths defined in projects.json")
-        return
+    # OpenVikingManager lifecycle
+    manager = None
+    try:
+        # Check if OpenViking is enabled
+        openviking_enabled = os.getenv("OPEN_VIKING_ENABLED", "false").lower() == "true"
+        
+        if openviking_enabled:
+            # Get OpenViking server path from env or use default
+            openviking_server_path = os.getenv("OPEN_VIKING_SERVER_PATH", "openviking-server")
+            
+            # Instantiate OpenVikingManager
+            manager = process_manager.OpenVikingManager(
+                executable=openviking_server_path,
+                args=[]
+            )
+            
+            # Start the OpenViking server
+            await manager.start()
+            logger.info(f"OpenViking server started with executable: {openviking_server_path}")
+            
+            # Health check loop - wait for server to be alive
+            max_retries = 30
+            retry_delay = 1.0
+            for i in range(max_retries):
+                if await manager.health_check():
+                    logger.info("OpenViking server health check passed")
+                    break
+                logger.info(f"Waiting for OpenViking server to be ready... ({i+1}/{max_retries})")
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error("OpenViking server health check failed - proceeding without OpenViking")
+                manager = None  # Prevent finally block from trying to stop a failed server
+        
+        # Normal operation
+        # Load configuration from projects.json
+        config_path = Path(__file__).parent / "projects.json"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            watch_paths = config.get("watch_paths", [])
+        else:
+            print("Error: projects.json not found.")
+            print("Please create projects.json based on projects.json.example")
+            return
+        
+        if not watch_paths:
+            print("Error: No watch_paths defined in projects.json")
+            return
 
-    sentinel = QdrantSentinel(watch_paths)
-    sentinel.initial_scan()
-    sentinel.start_watching()
+        sentinel = QdrantSentinel(watch_paths)
+        sentinel.initial_scan()
+        sentinel.start_watching()
+        
+    finally:
+        # Remove signal handlers on exit
+        try:
+            try:
+                loop.remove_signal_handler(signal.SIGTERM)
+                loop.remove_signal_handler(signal.SIGINT)
+            except (NotImplementedError, ValueError):
+                pass  # Handlers may not be registered or platform doesn't support it
+        except Exception as e:
+            logger.warning(f"Error removing signal handlers: {e}")
+        
+        # Ensure OpenViking server is stopped on exit or crash
+        if manager is not None:
+            logger.info("Stopping OpenViking server...")
+            await manager.stop()
+            logger.info("OpenViking server stopped")
+
+
+def main():
+    """Synchronous entry point that runs async_main."""
+    asyncio.run(async_main())
+
 
 if __name__ == "__main__":
     main()

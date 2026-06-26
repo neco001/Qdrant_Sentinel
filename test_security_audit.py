@@ -36,7 +36,7 @@ class TestOpenVikingSecurity:
             mock_run.return_value = Mock(stdout='{"id": "test123"}', stderr='')
             
             # Call add_resource with potentially malicious input
-            result = client.add_resource("test; rm -rf /", "file")
+            result = client.add_resource(path="test; rm -rf /", wait=False)
             
             # Verify subprocess.run was called with list, not shell=True
             assert mock_run.called
@@ -70,32 +70,26 @@ class TestOpenVikingSecurity:
             kwargs = call_args[1]
             assert 'shell' not in kwargs or kwargs.get('shell') is False
 
-    def test_tags_are_properly_joined(self):
+    def test_path_argument_is_properly_passed(self):
         """
-        Verify that tags are properly joined with commas and not passed as separate args.
+        Verify that path argument is properly passed to the CLI.
         """
         client = OpenVikingClient()
         
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = Mock(stdout='{"id": "test123"}', stderr='')
             
-            # Call with tags that could be malicious
-            result = client.add_resource(
-                "test",
-                "file",
-                tags=["tag1", "tag2;malicious", "tag3"]
-            )
+            # Call with potentially malicious path
+            result = client.add_resource(path="test; rm -rf /", wait=False)
             
-            # Verify tags are comma-separated in a single argument
+            # Verify path is passed as an argument
             call_args = mock_run.call_args[0][0]
             
-            # Find the --tags argument
-            tags_index = call_args.index("--tags")
-            tags_value = call_args[tags_index + 1]
+            # The path should be in the command list
+            assert "test; rm -rf /" in call_args
             
-            # Should be a single comma-separated string
-            assert isinstance(tags_value, str)
-            assert "," in tags_value
+            # Command should be "add-resource", not "add"
+            assert "add-resource" in call_args
 
     def test_cli_path_is_not_executed_via_shell(self):
         """
