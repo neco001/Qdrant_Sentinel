@@ -103,7 +103,7 @@ Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and
 ## Configuration
 
 ### Environment Variables (.env)
-- `QDRANT_URL`: Qdrant instance URL (default: `http://localhost:6333`)
+- `QDRANT_URL`: Qdrant instance URL (default: `http://127.0.0.1:6333`)
 - `QDRANT_API_KEY`: Qdrant API key (for cloud instances)
 - `EMBEDDING_MODEL`: Embedding model to use (default: `text-embedding-3-small`)
 - `EMBEDDING_API_KEY`: API key for embedding service
@@ -187,7 +187,7 @@ Returns JSON output:
   "status": "healthy",
   "qdrant": {
     "status": "connected",
-    "url": "http://localhost:6333",
+    "url": "http://127.0.0.1:6333",
     "collections": 3
   },
   "openviking": {

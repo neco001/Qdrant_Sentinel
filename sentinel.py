@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 # Fix OpenSSL uplink crash caused by AVG/Avast SSLKEYLOGFILE injection on Windows
 os.environ.pop('SSLKEYLOGFILE', None)
@@ -45,7 +46,7 @@ load_dotenv()
 def _load_from_env() -> tuple:
     """Load configuration from environment variables as fallback."""
     return (
-        os.getenv("QDRANT_URL", "http://localhost:6333"),
+        os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
         os.getenv("EMBEDDING_API_KEY"),
         os.getenv("EMBEDDING_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4kt"),
@@ -60,7 +61,7 @@ try:
     config = load_config()
     
     # Load from config file with fallback to environment variables
-    QDRANT_URL = config.qdrant.url if hasattr(config, 'qdrant') else os.getenv("QDRANT_URL", "http://localhost:6333")
+    QDRANT_URL = config.qdrant.url if hasattr(config, 'qdrant') else os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
     EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY")  # Always from environment for security
     EMBEDDING_BASE_URL = config.embeddings.base_url if hasattr(config, 'embeddings') else os.getenv("EMBEDDING_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
     EMBEDDING_MODEL_NAME = config.embeddings.model_name if hasattr(config, 'embeddings') else os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
@@ -83,7 +84,7 @@ class QdrantSentinel:
     AUTO_UPDATE_GITIGNORE = True  # Server-managed .gitignore updates (user-chosen Option A)
     def __init__(self, watch_paths: List[str]):
         self.watch_paths = [Path(p).resolve() for p in watch_paths]
-        self.client = QdrantClient(url=QDRANT_URL)
+        self.client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
         self.ai_client = OpenAI(api_key=EMBEDDING_API_KEY, base_url=EMBEDDING_BASE_URL)
         self.ov_client = OpenVikingClient()
         self.init_db()
@@ -591,7 +592,7 @@ def get_qdrant_mapping(ov_resource_id: str, conn) -> Optional[str]:
 
 def get_qdrant_client():
     """Get Qdrant client instance (helper for testing)."""
-    return QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+    return QdrantClient(url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"), check_compatibility=False)
 
 
 def get_db_connection():
@@ -938,32 +939,43 @@ async def async_main():
         openviking_enabled = os.getenv("OPEN_VIKING_ENABLED", "false").lower() == "true"
         
         if openviking_enabled:
-            # Get OpenViking server path from env or use default
-            openviking_server_path = os.getenv("OPEN_VIKING_SERVER_PATH", "openviking-server")
+            # OpenViking version detection
+            has_standalone_server = shutil.which("openviking-server") is not None
             
-            # Instantiate OpenVikingManager
-            manager = process_manager.OpenVikingManager(
-                executable=openviking_server_path,
-                args=[]
-            )
-            
-            # Start the OpenViking server
-            await manager.start()
-            logger.info(f"OpenViking server started with executable: {openviking_server_path}")
-            
-            # Health check loop - wait for server to be alive
-            max_retries = 30
-            retry_delay = 1.0
-            for i in range(max_retries):
-                if await manager.health_check():
-                    logger.info("OpenViking server health check passed")
-                    break
-                logger.info(f"Waiting for OpenViking server to be ready... ({i+1}/{max_retries})")
-                await asyncio.sleep(retry_delay)
+            # For v0.3.25 and older: NO SERVER exists. Client runs in standalone mode.
+            # We should NOT attempt to start any server process for these versions.
+            if has_standalone_server:
+                logger.info("Detected openviking-server binary - will manage server lifecycle")
+                # Get OpenViking server path from env or use default
+                openviking_server_path = os.getenv("OPEN_VIKING_SERVER_PATH", "openviking-server")
+                
+                # Instantiate OpenVikingManager
+                manager = process_manager.OpenVikingManager(
+                    executable=openviking_server_path,
+                    args=[]
+                )
+                
+                # Start the OpenViking server
+                await manager.start()
+                logger.info(f"OpenViking server started with executable: {openviking_server_path}")
+                
+                # Health check loop - wait for server to be alive
+                max_retries = 30
+                retry_delay = 1.0
+                for attempt in range(max_retries):
+                    if await manager.health_check():
+                        logger.info("OpenViking server health check passed")
+                        break
+                    logger.info(f"Waiting for OpenViking server to be ready... ({attempt+1}/{max_retries})")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error("OpenViking server health check failed - proceeding without OpenViking")
+                    manager = None  # Prevent finally block from trying to stop a failed server
             else:
-                logger.error("OpenViking server health check failed - proceeding without OpenViking")
-                manager = None  # Prevent finally block from trying to stop a failed server
-        
+                logger.info("OpenViking standalone server not found - assuming client-only mode (v0.3.25 or older)")
+                logger.info("No server process will be started - CLI operates in direct mode")
+                manager = None
+
         # Normal operation
         # Load configuration from projects.json
         config_path = Path(__file__).parent / "projects.json"

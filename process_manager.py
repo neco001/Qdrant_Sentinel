@@ -208,16 +208,16 @@ class OpenVikingManager:
             logger.error(f"Error stopping openviking-server: {e}")
         finally:
                     # Cancel monitor task
-        if self._monitor_task and not self._monitor_task.done():
-            self._monitor_task.cancel()
+            # Cancel monitor task
+            if self._monitor_task and not self._monitor_task.done():
+                self._monitor_task.cancel()
             
-        # Cancel log reading tasks
+            # Cancel log reading tasks
             for task in self._log_tasks:
                 if not task.done():
                     task.cancel()
             self._log_tasks.clear()
             self.process = None
-    
     async def wait(self) -> int:
         """
         Wait for the process to terminate.

@@ -32,7 +32,7 @@ def _load_config():
 
 def _create_qdrant_client(url: str):
     """Create Qdrant client (patchable for testing)."""
-    return QdrantClient(url=url)
+    return QdrantClient(url=url, check_compatibility=False)
 
 
 def _create_embedding_client(api_key: str, base_url: str):
