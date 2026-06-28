@@ -24,11 +24,9 @@ import pathspec
 import uuid
 import tomli_w
 import threading
-import process_manager
 
 # Global shutdown flag for PM2 compatibility
 shutdown_flag = False
-manager = None  # Global reference to OpenVikingManager for signal handler
 
 # Global rate limiter for embedding API (max 2 concurrent requests)
 EMBEDDING_SEMAPHORE = threading.Semaphore(2)
@@ -86,7 +84,9 @@ class QdrantSentinel:
         self.watch_paths = [Path(p).resolve() for p in watch_paths]
         self.client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
         self.ai_client = OpenAI(api_key=EMBEDDING_API_KEY, base_url=EMBEDDING_BASE_URL)
-        self.ov_client = OpenVikingClient()
+        # Use data_path from config if available, otherwise let OpenVikingClient use its default
+        ov_data_path = _config.openviking.data_path if _config and hasattr(_config, 'openviking') and hasattr(_config.openviking, 'data_path') else None
+        self.ov_client = OpenVikingClient(data_path=ov_data_path)
         self.init_db()
 
     def init_db(self):
@@ -750,7 +750,9 @@ def rebuild_index(
     try:
         # Initialize clients (using helper functions for testability)
         qdrant_client = get_qdrant_client()
-        ov_client = OpenVikingClient()
+        # Use data_path from config if available, otherwise let OpenVikingClient use its default
+        ov_data_path = _config.openviking.data_path if _config and hasattr(_config, 'openviking') and hasattr(_config.openviking, 'data_path') else None
+        ov_client = OpenVikingClient(data_path=ov_data_path)
         
         # Step 1: Gather statistics
         collections = qdrant_client.get_collections().collections
@@ -866,7 +868,7 @@ def rebuild_index(
 
 async def signal_handler(sig_num=None):
     """Signal handler for SIGTERM/SIGINT - graceful shutdown for PM2 compatibility."""
-    global shutdown_flag, manager
+    global shutdown_flag
     
     # Early return if already shutting down to prevent race condition
     if shutdown_flag:
@@ -875,20 +877,12 @@ async def signal_handler(sig_num=None):
     shutdown_flag = True
     signal_name = signal.Signals(sig_num).name if sig_num else "UNKNOWN"
     logger.info(f"Shutdown signal ({signal_name}) received - initiating graceful shutdown")
-    
-    # Stop OpenViking server if running
-    if manager is not None:
-        try:
-            await manager.stop()
-            logger.info("OpenViking server stopped due to signal")
-        except Exception as e:
-            logger.error(f"Error stopping OpenViking server: {e}")
 
 
 async def async_main():
-    """Async main function with OpenVikingManager lifecycle management."""
+    """Async main function for Qdrant Sentinel."""
     import argparse
-    global manager, shutdown_flag
+    global shutdown_flag
     
     # Get event loop and register signal handlers
     loop = asyncio.get_event_loop()
@@ -898,18 +892,8 @@ async def async_main():
         loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(signal_handler(signal.SIGTERM)))
         loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(signal_handler(signal.SIGINT)))
     except NotImplementedError:
-        # Windows doesn't support add_signal_handler, use alternative approach
-        logger.warning("Signal handlers not supported on this platform - using atexit handler")
-        import atexit
-        def windows_shutdown():
-            global manager
-            if manager is not None:
-                try:
-                    asyncio.run(manager.stop())
-                    logger.info("OpenViking server stopped via atexit")
-                except Exception as e:
-                    logger.error(f"Error stopping OpenViking server: {e}")
-        atexit.register(windows_shutdown)
+        # Windows doesn't support add_signal_handler
+        logger.warning("Signal handlers not supported on this platform")
     
     parser = argparse.ArgumentParser(description="Qdrant Sentinel - Code Indexer")
     parser.add_argument("--rebuild", action="store_true", help="Full rebuild of index")
@@ -932,50 +916,7 @@ async def async_main():
         )
         sys.exit(0 if success else 1)
     
-    # OpenVikingManager lifecycle
-    manager = None
     try:
-        # Check if OpenViking is enabled
-        openviking_enabled = os.getenv("OPEN_VIKING_ENABLED", "false").lower() == "true"
-        
-        if openviking_enabled:
-            # OpenViking version detection
-            has_standalone_server = shutil.which("openviking-server") is not None
-            
-            # For v0.3.25 and older: NO SERVER exists. Client runs in standalone mode.
-            # We should NOT attempt to start any server process for these versions.
-            if has_standalone_server:
-                logger.info("Detected openviking-server binary - will manage server lifecycle")
-                # Get OpenViking server path from env or use default
-                openviking_server_path = os.getenv("OPEN_VIKING_SERVER_PATH", "openviking-server")
-                
-                # Instantiate OpenVikingManager
-                manager = process_manager.OpenVikingManager(
-                    executable=openviking_server_path,
-                    args=[]
-                )
-                
-                # Start the OpenViking server
-                await manager.start()
-                logger.info(f"OpenViking server started with executable: {openviking_server_path}")
-                
-                # Health check loop - wait for server to be alive
-                max_retries = 30
-                retry_delay = 1.0
-                for attempt in range(max_retries):
-                    if await manager.health_check():
-                        logger.info("OpenViking server health check passed")
-                        break
-                    logger.info(f"Waiting for OpenViking server to be ready... ({attempt+1}/{max_retries})")
-                    await asyncio.sleep(retry_delay)
-                else:
-                    logger.error("OpenViking server health check failed - proceeding without OpenViking")
-                    manager = None  # Prevent finally block from trying to stop a failed server
-            else:
-                logger.info("OpenViking standalone server not found - assuming client-only mode (v0.3.25 or older)")
-                logger.info("No server process will be started - CLI operates in direct mode")
-                manager = None
-
         # Normal operation
         # Load configuration from projects.json
         config_path = Path(__file__).parent / "projects.json"
@@ -1006,12 +947,6 @@ async def async_main():
                 pass  # Handlers may not be registered or platform doesn't support it
         except Exception as e:
             logger.warning(f"Error removing signal handlers: {e}")
-        
-        # Ensure OpenViking server is stopped on exit or crash
-        if manager is not None:
-            logger.info("Stopping OpenViking server...")
-            await manager.stop()
-            logger.info("OpenViking server stopped")
 
 
 def main():

@@ -119,6 +119,67 @@ state_db = "sentinel_state.db"
             assert config.openviking.cli_path == "ov"
             assert config.openviking.enabled is True
 
+    def test_load_config_openviking_data_path(self):
+        """Verify OpenViking data_path field is supported and has sensible defaults."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Test 1: Custom data_path in TOML
+            config_path = Path(tmpdir) / "qdrant_index.toml"
+            config_path.write_text("""
+[qdrant]
+url = "http://127.0.0.1:6333"
+
+[embeddings]
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+model_name = "text-embedding-v4"
+dimension = 1024
+
+[openviking]
+cli_path = "ov"
+enabled = true
+data_path = "./custom_ov_data"
+
+[paths]
+data_root = "."
+state_db = "sentinel_state.db"
+""")
+            
+            config = load_config(tmpdir)
+            
+            # Verify custom data_path is loaded
+            assert hasattr(config.openviking, 'data_path'), "OpenVikingConfig should have data_path field"
+            assert config.openviking.data_path == "./custom_ov_data"
+            
+            # Test 2: Default data_path when not specified
+            config_path2 = Path(tmpdir) / "qdrant_index2.toml"
+            # Rename to test defaults
+            config_path.rename(config_path2)
+            config_path.write_text("""
+[qdrant]
+url = "http://127.0.0.1:6333"
+
+[embeddings]
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+model_name = "text-embedding-v4"
+dimension = 1024
+
+[openviking]
+cli_path = "ov"
+enabled = true
+
+[paths]
+data_root = "."
+state_db = "sentinel_state.db"
+""")
+            
+            config_default = load_config(tmpdir)
+            
+            # Verify default data_path (should be "./openviking_data" or similar sensible default)
+            assert hasattr(config_default.openviking, 'data_path'), "OpenVikingConfig should have data_path field even when not specified"
+            # Default should be a non-empty string path
+            assert config_default.openviking.data_path is not None
+            assert isinstance(config_default.openviking.data_path, str)
+            assert len(config_default.openviking.data_path) > 0
+
     def test_load_config_paths_defaults(self):
         """Verify Paths config uses defaults when values missing."""
         with tempfile.TemporaryDirectory() as tmpdir:

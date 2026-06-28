@@ -1,125 +1,174 @@
-import subprocess
-import json
 import logging
-import os
-import shutil
+import warnings
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# Try to import SyncOpenViking from openviking package
+# Graceful degradation: if import fails, _client will be None
+try:
+    from openviking import SyncOpenViking
+    _SYNC_OPENVIKING_AVAILABLE = True
+except ImportError:
+    SyncOpenViking = None  # type: ignore
+    _SYNC_OPENVIKING_AVAILABLE = False
+    logger.warning("SyncOpenViking not available. OpenVikingClient will operate in degraded mode.")
+
+
+DEFAULT_DATA_PATH = "./openviking_data"
+
+
+# Security Validation Helpers - Defense in depth for input sanitization
+def _is_path_traversal_attempt(path: str) -> bool:
+    """Check if path contains path traversal sequences (../ or ..\)."""
+    if not isinstance(path, str):
+        return False
+    # Check for both Unix-style (../) and Windows-style (..\) traversal
+    normalized = path.replace('\\', '/')
+    return '/../' in normalized or normalized.startswith('../') or normalized.endswith('/..')
+
+
+def _contains_null_bytes(path: str) -> bool:
+    """Check if path contains null bytes (common extension bypass attack vector)."""
+    if not isinstance(path, str):
+        return False
+    return '\x00' in path
+
+
+def _is_valid_path_for_add_resource(path: str) -> bool:
+    """
+    Validate that a path is safe before passing to SyncOpenViking.add_resource().
+    Returns True if safe, False if blocked. Logs security warnings on blocks.
+    """
+    if _contains_null_bytes(path):
+        logger.warning(f"SECURITY: Blocked path containing null bytes: {path!r}")
+        return False
+    if _is_path_traversal_attempt(path):
+        logger.warning(f"SECURITY: Blocked path traversal attempt: {path!r}")
+        return False
+    return True
+
+
+def _is_empty_or_whitespace(query: str) -> bool:
+    """Check if query is None, empty, or whitespace-only (for short-circuit optimization)."""
+    if query is None:
+        return True
+    if not isinstance(query, str):
+        return True
+    return query.strip() == ""
+
 
 class OpenVikingClient:
     """
-    Wrapper for the OpenViking (ov) CLI tool.
-    Provides methods to add resources and find resources via subprocess calls.
+    Wrapper for the native OpenViking SyncOpenViking API (embedded mode).
+    Provides methods to add resources and find resources via direct Python API calls.
+    
+    Backward compatible with the old subprocess-based CLI wrapper interface.
     """
 
-    def __init__(self, cli_path: str = "ov"):
+    def __init__(self, data_path: Optional[str] = None, cli_path: Optional[str] = None):
         """
         Initialize the OpenViking client.
 
         Args:
-            cli_path: Path to the ov CLI executable. Defaults to "ov".
+            data_path: Path to the OpenViking data directory. Defaults to "./openviking_data".
+            cli_path: DEPRECATED. Former path to the ov CLI executable. Now ignored with warning.
         """
-        self.cli_path = cli_path
+        # Handle deprecated cli_path parameter for backward compatibility
+        if cli_path is not None:
+            warnings.warn(
+                f"The 'cli_path' parameter is deprecated and will be removed in a future version. "
+                f"OpenVikingClient now uses the native SyncOpenViking API (embedded mode). "
+                f"Use 'data_path' instead if you need to customize the data directory. "
+                f"Provided cli_path: {cli_path}",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            logger.warning(f"Deprecated cli_path parameter provided: {cli_path} - ignoring, using native mode")
 
-    def _run_command(self, args: List[str], timeout: int = 30) -> Optional[str]:
-        """
-        Internal helper to execute a subprocess command safely.
-
-        Args:
-            args: List of arguments to pass to the CLI.
-            timeout: Seconds to wait before timing out.
-
-        Returns:
-            stdout string if successful, None if failed.
-        """
+        # Determine effective data_path
+        self._data_path = data_path if data_path is not None else DEFAULT_DATA_PATH
+        self._cli_path = cli_path  # Store for backward compat inspection (e.g., tests checking cli_path attr)
+        
+        # Initialize the native SyncOpenViking client with graceful degradation
+        self._client: Optional[Any] = None
+        
+        if not _SYNC_OPENVIKING_AVAILABLE:
+            logger.warning(
+                f"SyncOpenViking not available. OpenVikingClient initialized in degraded mode. "
+                f"Methods will return None/empty lists."
+            )
+            return
+        
         try:
-            # Prepare environment with augmented PATH for Windows npm global packages
-            env = os.environ.copy()
-            if os.name == 'nt':
-                npm_global = os.path.join(os.environ.get('APPDATA', ''), 'npm')
-                if os.path.exists(npm_global) and npm_global not in env.get('PATH', ''):
-                    env['PATH'] = f"{npm_global};{env.get('PATH', '')}"
-                    logger.debug(f"Augmented PATH with npm global directory: {npm_global}")
-            
-            # Resolve executable path on Windows (handle .cmd/.bat files)
-            cli_path = self.cli_path
-            if os.name == 'nt':
-                resolved = shutil.which(self.cli_path)
-                if resolved:
-                    cli_path = resolved
-                    logger.debug(f"Resolved OpenViking CLI: {cli_path}")
-                else:
-                    logger.warning(f"Could not resolve OpenViking CLI: {self.cli_path}")
-            
-            result = subprocess.run(
-                [cli_path] + args,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=timeout,
-                env=env
-            )
-            return result.stdout.strip()
-        except FileNotFoundError:
-            logger.error(f"OpenViking CLI not found at: {self.cli_path}")
-            return None
-        except subprocess.TimeoutExpired:
-            logger.error(f"OpenViking CLI command timed out: {' '.join(args)}")
-            return None
-        except subprocess.CalledProcessError as e:
-            logger.error(
-                f"OpenViking CLI command failed with exit code {e.returncode}. "
-                f"Stderr: {e.stderr.strip() if e.stderr else 'Empty'}. "
-                f"Stdout: {e.stdout.strip() if e.stdout else 'Empty'}"
-            )
-            return None
+            self._client = SyncOpenViking(path=self._data_path)
+            logger.info(f"OpenVikingClient initialized natively with data_path: {self._data_path}")
         except Exception as e:
-            logger.error(f"Unexpected error running OpenViking CLI: {e}")
-            return None
+            logger.error(
+                f"Failed to initialize native SyncOpenViking with data_path={self._data_path}: {e}. "
+                f"Operating in degraded mode."
+            )
+            self._client = None
+
+    @property
+    def cli_path(self) -> str:
+        """
+        Backward compatibility property for code that inspects self.cli_path.
+        Returns the deprecated cli_path if provided, otherwise a default string.
+        """
+        return self._cli_path if self._cli_path is not None else "ov"
 
     def add_resource(
         self, path: str, wait: bool = False, timeout: int = 30
     ) -> Optional[str]:
         """
-        Add a resource using the ov CLI.
+        Add a resource using the native SyncOpenViking API.
 
         Args:
             path: Local path or URL to import.
-            wait: Whether to wait until processing is complete.
-            timeout: Seconds to wait before timing out.
+            wait: Ignored in native mode (API is synchronous by design).
+            timeout: Ignored in native mode.
 
         Returns:
             Resource ID string if successful, None otherwise.
         """
-        args = ["add-resource", path]
+        if self._client is None:
+            logger.warning(f"Cannot add_resource: SyncOpenViking client not available. Path: {path}")
+            return None
         
-        if wait:
-            args.append("--wait")
-
-        output = self._run_command(args, timeout=timeout)
-        
-        if output:
-            try:
-                # Parse JSON output to extract resource ID
-                data = json.loads(output)
-                # OpenViking may return the ID in various formats
-                if isinstance(data, dict):
-                    return data.get("id") or data.get("temp_file_id") or data.get("resource_id") or data.get("uri")
-                elif isinstance(data, list) and len(data) > 0:
-                        return data[0].get("id") or data[0].get("temp_file_id") or data[0].get("resource_id")
+        try:
+            # SyncOpenViking.add_resource returns a Dict[str, Any] with resource info
+            result = self._client.add_resource(path)
+            
+            if result is None:
+                logger.warning(f"SyncOpenViking.add_resource returned None for path: {path}")
+                return None
+            
+            # Extract ID from various possible keys (maintaining backward compat logic)
+            if isinstance(result, dict):
+                resource_id = (
+                    result.get("id")
+                    or result.get("temp_file_id")
+                    or result.get("resource_id")
+                    or result.get("uri")
+                )
+                if resource_id is not None:
+                    return str(resource_id)
                 else:
-                    return str(data)
-            except json.JSONDecodeError:
-                # Fallback: if output is not JSON, assume it is the ID itself
-                return output
-        
-        return None
+                    logger.warning(f"SyncOpenViking.add_resource returned dict but no ID found. Keys: {list(result.keys())}")
+                    return None
+            else:
+                # Unexpected return type - try to stringify
+                logger.warning(f"SyncOpenViking.add_resource returned unexpected type: {type(result)}. Attempting string conversion.")
+                return str(result)
+                
+        except Exception as e:
+            logger.error(f"Error in native add_resource for path {path}: {e}")
+            return None
 
     def find_resources(self, query: str) -> List[Dict[str, Any]]:
         """
-        Find resources using the ov CLI.
+        Find resources using the native SyncOpenViking API.
 
         Args:
             query: Search query string.
@@ -127,24 +176,54 @@ class OpenVikingClient:
         Returns:
             List of resource dictionaries if successful, empty list otherwise.
         """
-        args = ["find", query]
-
-        output = self._run_command(args)
-
-        if output:
-            try:
-                data = json.loads(output)
-                # Ensure we return a list, even if CLI returns a dict with a 'results' key
-                if isinstance(data, list):
-                    return data
-                elif isinstance(data, dict) and "results" in data:
-                    return data["results"]
-                elif isinstance(data, dict) and "items" in data:
-                    return data["items"]
-                else:
-                    return [data]
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse OpenViking find response: {e}")
-                return []
+        if self._client is None:
+            logger.warning(f"Cannot find_resources: SyncOpenViking client not available. Query: {query}")
+            return []
         
-        return []
+        try:
+            # SyncOpenViking.find returns an iterable of FindResult objects (or similar)
+            # We need to convert them to dictionaries
+            results_iterator = self._client.find(query)
+            
+            if results_iterator is None:
+                return []
+            
+            results: List[Dict[str, Any]] = []
+            
+            for item in results_iterator:
+                # Convert FindResult-like objects to dicts
+                if isinstance(item, dict):
+                    results.append(item)
+                else:
+                    # Try to convert object to dict via __dict__ or attributes
+                    try:
+                        if hasattr(item, '__dict__'):
+                            results.append(dict(item.__dict__))
+                        elif hasattr(item, 'model_dump'):
+                            # Pydantic v2
+                            results.append(item.model_dump())
+                        elif hasattr(item, 'dict'):
+                            # Pydantic v1
+                            results.append(item.dict())
+                        else:
+                            # Last resort: try dir() based extraction
+                            item_dict = {}
+                            for attr in dir(item):
+                                if not attr.startswith('_'):
+                                    try:
+                                        val = getattr(item, attr)
+                                        if not callable(val):
+                                            item_dict[attr] = val
+                                    except Exception:
+                                        pass
+                            if item_dict:
+                                results.append(item_dict)
+                    except Exception as e:
+                        logger.warning(f"Failed to convert FindResult item to dict: {e}")
+                        continue
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in native find_resources for query '{query}': {e}")
+            return []

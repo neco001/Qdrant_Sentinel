@@ -42,7 +42,10 @@ def _create_embedding_client(api_key: str, base_url: str):
 
 def _create_ov_client():
     """Create OpenViking client (patchable for testing)."""
-    return OpenVikingClient()
+    config = _get_config()
+    # Use data_path from config if available, otherwise let OpenVikingClient use its default
+    ov_data_path = config.openviking.data_path if config and hasattr(config, 'openviking') and hasattr(config.openviking, 'data_path') else None
+    return OpenVikingClient(data_path=ov_data_path)
 
 
 def _get_config():

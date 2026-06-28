@@ -23,6 +23,7 @@ class EmbeddingsConfig:
 class OpenVikingConfig:
     cli_path: str
     enabled: bool
+    data_path: str
 
 @dataclass
 class PathsConfig:
@@ -96,7 +97,8 @@ def load_config(project_root: Optional[str] = None) -> AppConfig:
         ov_section = data.get("openviking", {})
         openviking = OpenVikingConfig(
             cli_path=ov_section.get("cli_path", "ov"),
-            enabled=ov_section.get("enabled", True)
+            enabled=ov_section.get("enabled", True),
+            data_path=ov_section.get("data_path", "./openviking_data")
         )
     except Exception as e:
         raise ConfigurationError(f"Invalid configuration in [openviking] section: {e}")

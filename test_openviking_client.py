@@ -1,33 +1,53 @@
-# tests/test_openvovking_client.py
+# test_openviking_client.py - Updated for native SyncOpenViking API
+# Backward compatible test suite migrated from subprocess CLI to native embedded mode
 
 import pytest
-import subprocess
+import warnings
 from unittest.mock import patch, MagicMock
 from openviking_client import OpenVikingClient
 
 
 class TestOpenVikingClient:
-    """Test suite for OpenVikingClient wrapper functionality."""
+    """Test suite for OpenVikingClient wrapper functionality (native SyncOpenViking mode)."""
 
-    def test_instantiation(self):
+    @patch('openviking_client.SyncOpenViking')
+    def test_instantiation(self, mock_sync_openviking: MagicMock):
         """Test that OpenVikingClient can be instantiated with default config."""
+        mock_instance = MagicMock()
+        mock_sync_openviking.return_value = mock_instance
+
         client = OpenVikingClient()
         assert client is not None
-        assert client.cli_path == "ov"
+        assert client.cli_path == "ov"  # Backward compat: default cli_path property
+        mock_sync_openviking.assert_called_once_with(path="./openviking_data")
 
-    def test_instantiation_with_custom_path(self):
-        """Test instantiation with custom CLI path."""
-        client = OpenVikingClient(cli_path="/custom/path/to/ov")
+    @patch('openviking_client.SyncOpenViking')
+    def test_instantiation_with_custom_path(self, mock_sync_openviking: MagicMock):
+        """Test instantiation with deprecated cli_path parameter (backward compatibility)."""
+        mock_instance = MagicMock()
+        mock_sync_openviking.return_value = mock_instance
+
+        # cli_path is deprecated but should still be stored for property inspection
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            client = OpenVikingClient(cli_path="/custom/path/to/ov")
+
+            # Verify deprecation warning was issued
+            assert len(w) == 1
+            assert issubclass(w[-1].category, DeprecationWarning)
+            assert "cli_path" in str(w[-1].message).lower()
+
+        # Backward compat: cli_path property returns the provided deprecated path
         assert client.cli_path == "/custom/path/to/ov"
+        # But SyncOpenViking was initialized with default data_path
+        mock_sync_openviking.assert_called_once_with(path="./openviking_data")
 
-    @patch('subprocess.run')
-    def test_add_resource_success(self, mock_run):
-        """Test add_resource() returns a resource_id on success."""
-        # Mock successful subprocess response
-        mock_result = MagicMock()
-        mock_result.stdout = "resource-12345\n"
-        mock_result.returncode = 0
-        mock_run.return_value = mock_result
+    @patch('openviking_client.SyncOpenViking')
+    def test_add_resource_success(self, mock_sync_openviking: MagicMock):
+        """Test add_resource() returns a resource_id on success using native API."""
+        mock_instance = MagicMock()
+        mock_sync_openviking.return_value = mock_instance
+        mock_instance.add_resource.return_value = {"id": "resource-12345"}
 
         client = OpenVikingClient()
         resource_id = client.add_resource(
@@ -36,16 +56,18 @@ class TestOpenVikingClient:
         )
 
         assert resource_id == "resource-12345"
-        mock_run.assert_called_once()
+        mock_instance.add_resource.assert_called_once_with("test-resource")
 
-    @patch('subprocess.run')
-    def test_find_resources_success(self, mock_run):
-        """Test find_resources() returns parsed results on success."""
-        # Mock successful subprocess response with JSON output
-        mock_result = MagicMock()
-        mock_result.stdout = '[{"id": "res-1", "name": "service-a"}]\n'
-        mock_result.returncode = 0
-        mock_run.return_value = mock_result
+    @patch('openviking_client.SyncOpenViking')
+    def test_find_resources_success(self, mock_sync_openviking: MagicMock):
+        """Test find_resources() returns parsed results on success using native API."""
+        mock_instance = MagicMock()
+        mock_sync_openviking.return_value = mock_instance
+
+        # Mock find() returning an iterable of dict-like objects
+        mock_find_result_1 = MagicMock()
+        mock_find_result_1.__dict__ = {"id": "res-1", "name": "service-a"}
+        mock_instance.find.return_value = [mock_find_result_1]
 
         client = OpenVikingClient()
         results = client.find_resources(query="service-a")
@@ -53,28 +75,29 @@ class TestOpenVikingClient:
         assert len(results) == 1
         assert results[0]["id"] == "res-1"
         assert results[0]["name"] == "service-a"
+        mock_instance.find.assert_called_once_with("service-a")
 
-    @patch('subprocess.run', side_effect=FileNotFoundError("ov not found"))
-    def test_graceful_degradation_cli_not_found(self, mock_run):
-        """Test graceful degradation when ov CLI is not found."""
+    @patch('openviking_client.SyncOpenViking')
+    def test_graceful_degradation_syncopenviking_fails_to_init(self, mock_sync_openviking: MagicMock):
+        """Test graceful degradation when SyncOpenViking fails to initialize (replaces CLI not found test)."""
+        # Simulate SyncOpenViking raising an exception during init
+        mock_sync_openviking.side_effect = RuntimeError("Failed to initialize OpenViking native engine")
+
         client = OpenVikingClient()
 
-        # Should not crash, return None or empty result
+        # Should not crash, client._client should be None (degraded mode)
         resource_id = client.add_resource(path="test", wait=False)
         assert resource_id is None
 
         results = client.find_resources(query="test")
         assert results == []
 
-    @patch('subprocess.run')
-    def test_error_handling_subprocess_failure(self, mock_run):
-        """Test that subprocess failures are caught and handled gracefully."""
-        # Mock subprocess failure by raising CalledProcessError
-        mock_run.side_effect = subprocess.CalledProcessError(
-            returncode=1,
-            cmd=["ov", "add-resource", "test"],
-            stderr="Error: Invalid arguments\n"
-        )
+    @patch('openviking_client.SyncOpenViking')
+    def test_error_handling_add_resource_raises_exception(self, mock_sync_openviking: MagicMock):
+        """Test that native API exceptions are caught and handled gracefully."""
+        mock_instance = MagicMock()
+        mock_sync_openviking.return_value = mock_instance
+        mock_instance.add_resource.side_effect = RuntimeError("Native add_resource failed: invalid path")
 
         client = OpenVikingClient()
 
@@ -82,17 +105,15 @@ class TestOpenVikingClient:
         resource_id = client.add_resource(path="test", wait=False)
         assert resource_id is None
 
-    @patch('subprocess.run')
-    def test_error_handling_malformed_json_response(self, mock_run):
-        """Test handling of malformed JSON in find_resources response."""
-        # Mock subprocess returning invalid JSON
-        mock_result = MagicMock()
-        mock_result.stdout = "not valid json\n"
-        mock_result.returncode = 0
-        mock_run.return_value = mock_result
+    @patch('openviking_client.SyncOpenViking')
+    def test_error_handling_find_resources_raises_exception(self, mock_sync_openviking: MagicMock):
+        """Test handling of exceptions in native find_resources (replaces malformed JSON test)."""
+        mock_instance = MagicMock()
+        mock_sync_openviking.return_value = mock_instance
+        mock_instance.find.side_effect = RuntimeError("Native find failed: query syntax error")
 
         client = OpenVikingClient()
         results = client.find_resources(query="test")
 
-        # Should return empty list on parse error
+        # Should return empty list on error
         assert results == []
