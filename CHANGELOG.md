@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## SOS Sync - 2026-06-29 21:46:46
+
+## [2026-06-29 21:40:40] 989e0d0d-b8eb-41db-b785-8ad7e820b8d4
+
+**Advice**: Stwórz interfejs IEmbeddingService z metodą embed_documents i embed_query. Następnie utwórz abstrakcyjną klasę BaseEmbeddingService, która będzie przechowywać wspólne logiki (np. walidacja parametrów). Plik: src/embedding_service/base.py
+
+---
+
 ## SOS Sync - 2026-06-28 22:33:24
 
 ## [2026-06-28 22:32:13] 9fe685ab-3044-4562-900a-c42e2a21a083
