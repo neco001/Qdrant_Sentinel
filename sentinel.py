@@ -123,7 +123,7 @@ class QdrantSentinel:
 
     def get_collection_name(self, project_path: Path) -> str:
         """Derive collection name from project path for human readability."""
-        return f"project-{project_path.name.lower()}"
+        return f"qdr-{project_path.name.lower()}"
 
     def should_ignore(self, path: Path, project_root: Path) -> bool:
         """Check if file should be ignored based on various ignore files."""
@@ -615,12 +615,15 @@ def get_status_report(qdrant_client, sqlite_conn):
             - mapped_count: Resources with valid qdrant_id mappings
             - unmapped_qdrant_count: Qdrant points without mapping
     """
-    # Get total Qdrant points
-    qdrant_count_result = qdrant_client.count(
-        collection_name="code_index",
-        exact=True
-    )
-    total_qdrant_points = qdrant_count_result.count
+
+    # Get all collections starting with qdr- prefix
+    collections = qdrant_client.get_collections()
+    total_qdrant_points = 0
+    
+    for collection in collections.collections:
+        if collection.name.startswith("qdr-"):
+            count = qdrant_client.count(collection.name, exact=True)
+            total_qdrant_points += count.count
     
     # Query SQLite for OpenViking mapping stats (single optimized query)
     cursor = sqlite_conn.cursor()
@@ -756,6 +759,8 @@ def rebuild_index(
         
         # Step 1: Gather statistics
         collections = qdrant_client.get_collections().collections
+        # Only target qdr-* collections for deletion to prevent accidental removal of other collections
+        collections = [c for c in collections if c.name.startswith("qdr-")]
         if project_name:
             collections = [c for c in collections if c.name == project_name]
         

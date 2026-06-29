@@ -1,8 +1,9 @@
 {
-  "status": "running",
+  "status": "processing",
   "started_at": "2026-06-28T22:32:17.232903",
-  "tasks_executed": 1,
+  "tasks_executed": 2,
   "current_task": null,
   "errors": [],
-  "pid": 40676
+  "pid": 40676,
+  "last_task_time": "2026-06-29T21:46:26.424953"
 }

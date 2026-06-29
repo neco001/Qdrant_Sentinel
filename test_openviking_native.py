@@ -84,8 +84,9 @@ class TestOpenVikingClientNative(unittest.TestCase):
         # Call add_resource
         resource_id = client.add_resource("/test/file.txt")
         
-        # Verify SyncOpenViking.add_resource was called
-        mock_instance.add_resource.assert_called_once_with("/test/file.txt")
+        # Verify SyncOpenViking.add_resource was called with optimization flag
+        # build_index=False: Skip redundant embedding since Qdrant already handles embeddings
+        mock_instance.add_resource.assert_called_once_with("/test/file.txt", build_index=False)
         
         # Verify returned resource ID
         self.assertEqual(resource_id, "test-123")

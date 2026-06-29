@@ -284,3 +284,49 @@ def find_by_structure(path_pattern: str) -> List[Dict[str, Any]]:
     
     finally:
         conn.close()
+
+
+if __name__ == "__main__":
+    import logging
+    import anyio
+    from mcp.server.stdio import stdio_server
+    from mcp.server.session import ServerSession
+    from mcp.server.models import InitializationOptions
+    from mcp.types import ServerCapabilities
+    import importlib.metadata
+
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("mcp_server")
+
+    async def receive_loop(session: ServerSession):
+        logger.info("Starting MCP server receive loop")
+        async for message in session.incoming_messages:
+            if isinstance(message, Exception):
+                logger.error("Error: %s", message)
+                continue
+            logger.info("Received message: %s", message)
+
+    async def main():
+        try:
+            version = importlib.metadata.version("mcp")
+            async with stdio_server() as (read_stream, write_stream):
+                async with (
+                    ServerSession(
+                        read_stream,
+                        write_stream,
+                        InitializationOptions(
+                            server_name="Qdrant+OpenViking MCP Server",
+                            server_version=version,
+                            capabilities=ServerCapabilities(),
+                        ),
+                    ) as session,
+                    write_stream,
+                ):
+                    await receive_loop(session)
+        except Exception as e:
+            logger.error("Server error: %s", e)
+            raise
+
+    logger.info("Starting Qdrant+OpenViking MCP Server")
+    anyio.run(main, backend="trio")

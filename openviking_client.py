@@ -136,9 +136,14 @@ class OpenVikingClient:
             logger.warning(f"Cannot add_resource: SyncOpenViking client not available. Path: {path}")
             return None
         
+        # Security: Block path traversal and null-byte attacks before reaching SyncOpenViking
+        if not _is_valid_path_for_add_resource(path):
+            return None
+        
         try:
             # SyncOpenViking.add_resource returns a Dict[str, Any] with resource info
-            result = self._client.add_resource(path)
+            # build_index=False: Skip redundant embedding since Qdrant already has embeddings
+            result = self._client.add_resource(path, build_index=False)
             
             if result is None:
                 logger.warning(f"SyncOpenViking.add_resource returned None for path: {path}")
@@ -178,6 +183,10 @@ class OpenVikingClient:
         """
         if self._client is None:
             logger.warning(f"Cannot find_resources: SyncOpenViking client not available. Query: {query}")
+            return []
+        
+        # Performance short-circuit: Empty/whitespace queries return immediately
+        if _is_empty_or_whitespace(query):
             return []
         
         try:

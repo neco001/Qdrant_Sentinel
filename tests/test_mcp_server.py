@@ -8,7 +8,7 @@ from pathlib import Path
 @pytest.fixture(autouse=True)
 def reset_mcp_state():
     """Reset MCP server state before each test to enable proper mocking."""
-    from mcp.server import reset_state
+    from mcp_server.server import reset_state
     reset_state()
     yield
 
@@ -37,10 +37,10 @@ class TestSearchQdrant:
     
     def test_search_qdrant_success(self, mock_qdrant_client, mock_config):
         """Verify successful semantic search returns results."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server._create_qdrant_client', return_value=mock_qdrant_client), \
-             patch('mcp.server._create_embedding_client'):
-            from mcp.server import search_qdrant
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server._create_qdrant_client', return_value=mock_qdrant_client), \
+             patch('mcp_server.server._create_embedding_client'):
+            from mcp_server.server import search_qdrant
             
             result = search_qdrant("test_collection", "search query", limit=5)
             
@@ -52,20 +52,20 @@ class TestSearchQdrant:
         """Verify error handling for non-existent collection."""
         mock_qdrant_client.get_collection.side_effect = Exception("Collection not found")
         
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server._create_qdrant_client', return_value=mock_qdrant_client), \
-             patch('mcp.server._create_embedding_client'):
-            from mcp.server import search_qdrant
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server._create_qdrant_client', return_value=mock_qdrant_client), \
+             patch('mcp_server.server._create_embedding_client'):
+            from mcp_server.server import search_qdrant
             
             with pytest.raises(Exception, match="Collection not found"):
                 search_qdrant("invalid_collection", "query")
     
     def test_search_qdrant_read_only_uses_search_not_upsert(self, mock_qdrant_client, mock_config):
         """Verify read-only safety: uses search() not upsert()."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server._create_qdrant_client', return_value=mock_qdrant_client), \
-             patch('mcp.server._create_embedding_client'):
-            from mcp.server import search_qdrant
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server._create_qdrant_client', return_value=mock_qdrant_client), \
+             patch('mcp_server.server._create_embedding_client'):
+            from mcp_server.server import search_qdrant
             
             search_qdrant("test_collection", "query")
             
@@ -92,8 +92,8 @@ class TestGetSearchContext:
     
     def test_get_search_context_l1_tier(self, mock_ov_client):
         """Verify L1 context retrieval."""
-        with patch('mcp.server._create_ov_client', return_value=mock_ov_client):
-            from mcp.server import get_search_context
+        with patch('mcp_server.server._create_ov_client', return_value=mock_ov_client):
+            from mcp_server.server import get_search_context
             
             result = get_search_context("qdrant_id_123", tier="L1")
             
@@ -110,8 +110,8 @@ class TestGetSearchContext:
             }
         ]
         
-        with patch('mcp.server._create_ov_client', return_value=mock_ov_client):
-            from mcp.server import get_search_context
+        with patch('mcp_server.server._create_ov_client', return_value=mock_ov_client):
+            from mcp_server.server import get_search_context
             
             result = get_search_context("qdrant_id_123", tier="L0")
             
@@ -120,16 +120,16 @@ class TestGetSearchContext:
     
     def test_get_search_context_invalid_tier(self, mock_ov_client):
         """Verify error handling for invalid tier."""
-        with patch('mcp.server._create_ov_client', return_value=mock_ov_client):
-            from mcp.server import get_search_context
+        with patch('mcp_server.server._create_ov_client', return_value=mock_ov_client):
+            from mcp_server.server import get_search_context
             
             with pytest.raises(ValueError, match="Invalid tier"):
                 get_search_context("qdrant_id_123", tier="INVALID")
     
     def test_get_search_context_read_only_uses_find_not_add(self, mock_ov_client):
         """Verify read-only safety: uses find_resources() not add_resource()."""
-        with patch('mcp.server._create_ov_client', return_value=mock_ov_client):
-            from mcp.server import get_search_context
+        with patch('mcp_server.server._create_ov_client', return_value=mock_ov_client):
+            from mcp_server.server import get_search_context
             
             get_search_context("qdrant_id_123", tier="L1")
             
@@ -166,9 +166,9 @@ class TestExpandContext:
     
     def test_expand_context_both_directions(self, mock_sqlite_conn, mock_config):
         """Verify context expansion in both directions."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', return_value=mock_sqlite_conn):
-            from mcp.server import expand_context
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import expand_context
             
             result = expand_context("file:///test.py", direction="both")
             
@@ -177,9 +177,9 @@ class TestExpandContext:
     
     def test_expand_context_parent_only(self, mock_sqlite_conn, mock_config):
         """Verify parent-only context expansion."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', return_value=mock_sqlite_conn):
-            from mcp.server import expand_context
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import expand_context
             
             result = expand_context("file:///test.py", direction="parent")
             
@@ -187,9 +187,9 @@ class TestExpandContext:
     
     def test_expand_context_child_only(self, mock_sqlite_conn, mock_config):
         """Verify child-only context expansion."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', return_value=mock_sqlite_conn):
-            from mcp.server import expand_context
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import expand_context
             
             result = expand_context("file:///test.py", direction="child")
             
@@ -197,9 +197,9 @@ class TestExpandContext:
     
     def test_expand_context_read_only_uses_select_not_insert(self, mock_sqlite_conn, mock_config):
         """Verify read-only safety: uses SELECT not INSERT/UPDATE."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', return_value=mock_sqlite_conn):
-            from mcp.server import expand_context
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import expand_context
             
             expand_context("file:///test.py")
             
@@ -228,7 +228,7 @@ class TestFindByStructure:
                 model_name="test_model",
                 dimension=1024
             ),
-            openviking=OpenVikingConfig(cli_path="ov", enabled=False),
+            openviking=OpenVikingConfig(data_path="./test_data", cli_path="ov", enabled=False),
             paths=PathsConfig(data_root=".", state_db=":memory:")
         )
     
@@ -248,9 +248,9 @@ class TestFindByStructure:
     
     def test_find_by_structure_pattern_wildcard(self, mock_sqlite_conn, mock_config):
         """Verify pattern matching with wildcards."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', return_value=mock_sqlite_conn):
-            from mcp.server import find_by_structure
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import find_by_structure
             
             result = find_by_structure("src/*.py")
             
@@ -259,9 +259,9 @@ class TestFindByStructure:
     
     def test_find_by_structure_exact_path(self, mock_sqlite_conn, mock_config):
         """Verify exact path matching."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', return_value=mock_sqlite_conn):
-            from mcp.server import find_by_structure
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import find_by_structure
             
             result = find_by_structure("src/module.py")
             
@@ -271,9 +271,9 @@ class TestFindByStructure:
         """Verify empty result handling."""
         mock_sqlite_conn.cursor.return_value.fetchall.return_value = []
         
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', return_value=mock_sqlite_conn):
-            from mcp.server import find_by_structure
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import find_by_structure
             
             result = find_by_structure("nonexistent/*.py")
             
@@ -281,9 +281,9 @@ class TestFindByStructure:
     
     def test_find_by_structure_read_only_uses_select_only(self, mock_sqlite_conn, mock_config):
         """Verify read-only safety: only SELECT queries."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', return_value=mock_sqlite_conn):
-            from mcp.server import find_by_structure
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import find_by_structure
             
             find_by_structure("src/*.py")
             
@@ -304,8 +304,8 @@ class TestConfigurationValidation:
         config = MagicMock()
         delattr(config, 'qdrant')
         
-        with patch('mcp.server._load_config', return_value=config):
-            from mcp.server import search_qdrant
+        with patch('mcp_server.server._load_config', return_value=config):
+            from mcp_server.server import search_qdrant
             
             with pytest.raises(AttributeError, match="Qdrant configuration missing"):
                 search_qdrant("test_collection", "query")
@@ -316,8 +316,8 @@ class TestConfigurationValidation:
         config.qdrant.url = "http://localhost:6333"
         delattr(config, 'embeddings')
         
-        with patch('mcp.server._load_config', return_value=config):
-            from mcp.server import search_qdrant
+        with patch('mcp_server.server._load_config', return_value=config):
+            from mcp_server.server import search_qdrant
             
             with pytest.raises(AttributeError, match="Embeddings configuration missing"):
                 search_qdrant("test_collection", "query")
@@ -330,7 +330,7 @@ class TestConnectionErrorHandling:
     def mock_config(self):
         """Mock configuration."""
         from shared_config import AppConfig, QdrantConfig, EmbeddingsConfig, OpenVikingConfig, PathsConfig
-        
+
         return AppConfig(
             qdrant=QdrantConfig(url="http://localhost:6333"),
             embeddings=EmbeddingsConfig(
@@ -338,31 +338,31 @@ class TestConnectionErrorHandling:
                 model_name="test_model",
                 dimension=1024
             ),
-            openviking=OpenVikingConfig(cli_path="ov", enabled=False),
+            openviking=OpenVikingConfig(data_path=".", cli_path="ov", enabled=False),
             paths=PathsConfig(data_root=".", state_db=":memory:")
         )
     
     def test_qdrant_connection_failure(self):
         """Verify graceful handling of Qdrant connection failure."""
-        with patch('mcp.server._load_config', side_effect=ConnectionError("Cannot connect")):
-            from mcp.server import search_qdrant
+        with patch('mcp_server.server._load_config', side_effect=ConnectionError("Cannot connect")):
+            from mcp_server.server import search_qdrant
             
             with pytest.raises(ConnectionError):
                 search_qdrant("test_collection", "query")
     
     def test_sqlite_connection_failure(self, mock_config):
         """Verify graceful handling of SQLite connection failure."""
-        with patch('mcp.server._load_config', return_value=mock_config), \
-             patch('mcp.server.sqlite3.connect', side_effect=sqlite3.Error("Database locked")):
-            from mcp.server import expand_context
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', side_effect=sqlite3.Error("Database locked")):
+            from mcp_server.server import expand_context
             
             with pytest.raises(sqlite3.Error):
                 expand_context("file:///test.py")
     
     def test_openviking_cli_not_found(self):
         """Verify graceful handling when OpenViking CLI is not found."""
-        with patch('mcp.server._create_ov_client', side_effect=FileNotFoundError("ov not found")):
-            from mcp.server import get_search_context
+        with patch('mcp_server.server._create_ov_client', side_effect=FileNotFoundError("ov not found")):
+            from mcp_server.server import get_search_context
             
             with pytest.raises(FileNotFoundError):
                 get_search_context("qdrant_id_123")

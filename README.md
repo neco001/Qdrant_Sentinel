@@ -66,6 +66,11 @@ Before running the Sentinel, you need a running Qdrant instance.
 docker run -d --name qdrant -p 6333:6333 -v qdrant_data:/qdrant/storage qdrant/qdrant
 ```
 
+**Troubleshooting**: If you see `[WinError 10061] No connection could be made because the target machine actively refused it`, this means your Qdrant Docker container is not running. Start it with:
+```bash
+docker start qdrant
+```
+
 ### Option B: Qdrant Cloud
 Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and API Key.
 
@@ -282,6 +287,12 @@ This project integrates with the following third-party software:
 - **Source**: [https://github.com/volcengine/OpenViking](https://github.com/volcengine/OpenViking)
 - **Usage**: Context database for AI agents with hierarchical filesystem paradigm
 - **Attribution**: This project uses OpenViking for augmented context management and memory storage. OpenViking is licensed under AGPLv3, and its source code is available at the above repository.
+
+**Embedded Mode**: This project uses `SyncOpenViking` in **embedded mode** (not as a subprocess). The API mapping is:
+- `OpenVikingClient.find_resources(query)` → maps directly to `SyncOpenViking.find(query)`
+- `OpenVikingClient.add_resource(path)` → maps directly to `SyncOpenViking.add(path)`
+
+This provides significant performance improvements and eliminates subprocess spawning overhead.
 
 ### Qdrant
 - **License**: Apache 2.0

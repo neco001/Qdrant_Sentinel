@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## SOS Sync - 2026-06-28 22:33:24
+
+## [2026-06-28 22:32:13] 9fe685ab-3044-4562-900a-c42e2a21a083
+
+**Advice**: Run the test suite to ensure:
+1. test_security_red_fail.py passes (validates the new guards).
+2. test_openviking_native.py and test_openviking_client.py pass (validates no regression in existing 17 tests).
+3. Confirm that safe paths (e.g., './local_file.txt') are still accepted.
+
+---
+
 ## SOS Sync - 2026-06-28 22:32:54
 
 ## [2026-06-28 22:32:13] 2bd5b81b-7b75-47e4-b80d-f1a40067c836

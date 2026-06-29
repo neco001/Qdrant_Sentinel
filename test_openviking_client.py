@@ -54,9 +54,8 @@ class TestOpenVikingClient:
             path="test-resource",
             wait=False
         )
-
         assert resource_id == "resource-12345"
-        mock_instance.add_resource.assert_called_once_with("test-resource")
+        mock_instance.add_resource.assert_called_once_with("test-resource", build_index=False)
 
     @patch('openviking_client.SyncOpenViking')
     def test_find_resources_success(self, mock_sync_openviking: MagicMock):
