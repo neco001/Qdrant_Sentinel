@@ -1,7 +1,7 @@
 {
-  "status": "processing",
+  "status": "stopped",
   "started_at": "2026-06-28T22:32:17.232903",
-  "tasks_executed": 2,
+  "tasks_executed": 4,
   "current_task": null,
   "errors": [],
   "pid": 40676,

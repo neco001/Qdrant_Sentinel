@@ -17,6 +17,7 @@ class TestSharedConfig:
 url = "http://localhost:6333"
 
 [embeddings]
+provider = "alibaba"
 base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 model_name = "text-embedding-v4"
 dimension = 1024
@@ -63,6 +64,7 @@ state_db = "sentinel_state.db"
             config_path = Path(tmpdir) / "qdrant_index.toml"
             config_path.write_text("""
 [embeddings]
+provider = "alibaba"
 base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 model_name = "text-embedding-v4"
 dimension = 1024
@@ -104,6 +106,7 @@ state_db = "sentinel_state.db"
 url = "http://localhost:6333"
 
 [embeddings]
+provider = "alibaba"
 base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 model_name = "text-embedding-v4"
 dimension = 1024
@@ -129,6 +132,7 @@ state_db = "sentinel_state.db"
 url = "http://127.0.0.1:6333"
 
 [embeddings]
+provider = "alibaba"
 base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 model_name = "text-embedding-v4"
 dimension = 1024
@@ -158,6 +162,7 @@ state_db = "sentinel_state.db"
 url = "http://127.0.0.1:6333"
 
 [embeddings]
+provider = "alibaba"
 base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 model_name = "text-embedding-v4"
 dimension = 1024
@@ -189,6 +194,7 @@ state_db = "sentinel_state.db"
 url = "http://localhost:6333"
 
 [embeddings]
+provider = "alibaba"
 base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 model_name = "text-embedding-v4"
 dimension = 1024

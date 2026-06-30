@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## SOS Sync - 2026-06-29 21:47:12
+
+## [2026-06-29 21:43:06] 5beed494-fef8-49dd-84aa-6be7ebbd0c13
+
+**Advice**: Zmodyfikuj shared_config.py, aby dodać pole provider do EmbeddingsConfig, które będzie określać, który dostawca embeddingów ma być używany (np. "openai-compatible" lub "byteplus-ark"). Upewnij się, że pole ma wartość domyślną, aby zachować zgodność wsteczną.
+
+---
+
 ## SOS Sync - 2026-06-29 21:46:46
 
 ## [2026-06-29 21:40:40] 989e0d0d-b8eb-41db-b785-8ad7e820b8d4

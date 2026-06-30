@@ -15,9 +15,11 @@ class QdrantConfig:
 
 @dataclass
 class EmbeddingsConfig:
-    base_url: str
-    model_name: str
-    dimension: int
+    provider: str
+    base_url: Optional[str] = None
+    model_name: Optional[str] = None
+    dimension: Optional[int] = None
+    api_key_env_var: Optional[str] = None
 
 @dataclass
 class OpenVikingConfig:
@@ -84,10 +86,14 @@ def load_config(project_root: Optional[str] = None) -> AppConfig:
     # CRITICAL: This config is shared between Sentinel and MCP to ensure vector compatibility
     try:
         emb_section = data["embeddings"]
+        # provider is required; other fields can come from factory defaults
+        provider = emb_section["provider"]
         embeddings = EmbeddingsConfig(
-            base_url=emb_section["base_url"],
-            model_name=emb_section["model_name"],
-            dimension=emb_section["dimension"]
+            provider=provider,
+            base_url=emb_section.get("base_url"),
+            model_name=emb_section.get("model_name"),
+            dimension=emb_section.get("dimension"),
+            api_key_env_var=emb_section.get("api_key_env_var"),
         )
     except KeyError as e:
         raise ConfigurationError(f"Missing required key in [embeddings] section: {e}")

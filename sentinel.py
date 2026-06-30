@@ -17,8 +17,8 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from openai import OpenAI
 from dotenv import load_dotenv
+from embedding_service.factory import EmbeddingServiceFactory
 from tqdm import tqdm
 import pathspec
 import uuid
@@ -83,7 +83,23 @@ class QdrantSentinel:
     def __init__(self, watch_paths: List[str]):
         self.watch_paths = [Path(p).resolve() for p in watch_paths]
         self.client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
-        self.ai_client = OpenAI(api_key=EMBEDDING_API_KEY, base_url=EMBEDDING_BASE_URL)
+        
+        # Initialize embedding service using factory pattern
+        if EMBEDDING_API_KEY is None:
+            raise ConfigurationError("EMBEDDING_API_KEY environment variable not set")
+        
+        # Use provider from config if available, fallback to 'openai_compatible'
+        provider = _config.embeddings.provider if _config and hasattr(_config, 'embeddings') else 'openai_compatible'
+        model_name = EMBEDDING_MODEL_NAME
+        base_url = EMBEDDING_BASE_URL
+        
+        self.embedding_service = EmbeddingServiceFactory.create(
+            provider=provider,
+            api_key=EMBEDDING_API_KEY,
+            model_name=model_name,
+            base_url=base_url,
+            vector_size=self.VECTOR_SIZE,
+        )
         # Use data_path from config if available, otherwise let OpenVikingClient use its default
         ov_data_path = _config.openviking.data_path if _config and hasattr(_config, 'openviking') and hasattr(_config.openviking, 'data_path') else None
         self.ov_client = OpenVikingClient(data_path=ov_data_path)
@@ -261,19 +277,15 @@ class QdrantSentinel:
                     pass # Probably created by another thread
 
             all_embeddings = []
-            # Alibaba/OpenAI support batching multiple inputs in one request
+            # Use embedding service factory for provider-agnostic embeddings
             for j in range(0, len(final_chunks), 10):
                 batch = [c.strip() for c in final_chunks[j:j+10] if c.strip()]
                 if not batch: continue
                 
                 # Rate limiting: max 2 concurrent embedding requests
                 with EMBEDDING_SEMAPHORE:
-                    emb_res = self.ai_client.embeddings.create(
-                        input=batch,
-                        model=EMBEDDING_MODEL_NAME,
-                        dimensions=self.VECTOR_SIZE  # Ensure consistent dimension
-                    )
-                    all_embeddings.extend([e.embedding for e in emb_res.data])
+                    batch_embeddings = self.embedding_service.embed_batch(batch)
+                    all_embeddings.extend(batch_embeddings)
                     time.sleep(0.5)  # Rate limiting to avoid 429 errors
 
             # Clear old points for this file to prevent duplicates and orphaned chunks

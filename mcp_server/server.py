@@ -8,19 +8,19 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 
 from qdrant_client import QdrantClient
-from openai import OpenAI
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from shared_config import load_config
+from embedding_service.factory import EmbeddingServiceFactory
 from openviking_client import OpenVikingClient
 
 
 # Lazy initialization globals
 _config = None
 _qdrant_client = None
-_embedding_client = None
+_embedding_service = None
 _ov_client = None
 _STATE_DB_PATH = None
 
@@ -35,9 +35,15 @@ def _create_qdrant_client(url: str):
     return QdrantClient(url=url, check_compatibility=False)
 
 
-def _create_embedding_client(api_key: str, base_url: str):
-    """Create OpenAI embedding client (patchable for testing)."""
-    return OpenAI(api_key=api_key, base_url=base_url)
+def _create_embedding_service(provider: str, api_key: str, model_name: str, base_url: str, vector_size: int):
+    """Create embedding service using factory (patchable for testing)."""
+    return EmbeddingServiceFactory.create(
+        provider=provider,
+        api_key=api_key,
+        model_name=model_name,
+        base_url=base_url,
+        vector_size=vector_size,
+    )
 
 
 def _create_ov_client():
@@ -65,16 +71,25 @@ def _get_qdrant_client():
     return _qdrant_client
 
 
-def _get_embedding_client():
-    """Lazy load OpenAI embedding client."""
-    global _embedding_client
-    if _embedding_client is None:
+def _get_embedding_service():
+    """Lazy load embedding service using factory."""
+    global _embedding_service
+    if _embedding_service is None:
         config = _get_config()
-        _embedding_client = _create_embedding_client(
-            config.embeddings.api_key,
-            config.embeddings.base_url
+        import os
+        api_key_env = config.embeddings.api_key_env_var or "EMBEDDING_API_KEY"
+        api_key = os.getenv(api_key_env)
+        if not api_key:
+            raise ValueError(f"API key not found in environment variable: {api_key_env}")
+        
+        _embedding_service = _create_embedding_service(
+            provider=config.embeddings.provider,
+            api_key=api_key,
+            model_name=config.embeddings.model_name,
+            base_url=config.embeddings.base_url,
+            vector_size=config.embeddings.dimension or 1024,
         )
-    return _embedding_client
+    return _embedding_service
 
 
 def _get_ov_client():
@@ -100,10 +115,10 @@ def reset_state():
     This function clears all lazy-loaded clients and configuration,
     allowing tests to patch dependencies and force re-initialization.
     """
-    global _config, _qdrant_client, _embedding_client, _ov_client, _STATE_DB_PATH
+    global _config, _qdrant_client, _embedding_service, _ov_client, _STATE_DB_PATH
     _config = None
     _qdrant_client = None
-    _embedding_client = None
+    _embedding_service = None
     _ov_client = None
     _STATE_DB_PATH = None
 
@@ -131,7 +146,7 @@ def search_qdrant(collection_name: str, query_text: str, limit: int = 5) -> List
     
     # Get clients
     qdrant_client = _get_qdrant_client()
-    embedding_client = _get_embedding_client()
+    embedding_service = _get_embedding_service()
     
     # Verify collection exists (read-only check)
     try:
@@ -139,12 +154,8 @@ def search_qdrant(collection_name: str, query_text: str, limit: int = 5) -> List
     except Exception as e:
         raise Exception(f"Collection '{collection_name}' not found or inaccessible: {e}")
     
-    # Generate embedding for query
-    response = embedding_client.embeddings.create(
-        model=config.embeddings.model_name,
-        input=[query_text]
-    )
-    query_vector = response.data[0].embedding
+    # Generate embedding for query using factory service
+    query_vector = embedding_service.embed(query_text)
     
     # Perform search (read-only)
     results = qdrant_client.search(

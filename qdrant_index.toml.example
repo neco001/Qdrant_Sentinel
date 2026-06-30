@@ -11,9 +11,18 @@ url = "http://127.0.0.1:6333"
 # Embedding API configuration - MUST be identical in sentinel.py and MCP server
 # Used by sentinel.py to generate embeddings during indexing
 # Used by MCP server to generate embeddings for search queries
+#
+# Supported providers:
+#   "openai_compatible" - OpenAI API, Alibaba DashScope, any OpenAI-compatible endpoint
+#   "byteplus_ark"      - BytePlus Volcengine Ark API (OpenAI-compatible)
+#   "alibaba" / "dashscope" - Convenience aliases for DashScope
+#   "byteplus"          - Convenience alias for BytePlus Ark
+provider = "openai_compatible"
 base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 model_name = "text-embedding-v4"
 dimension = 1024
+# Name of environment variable containing the API key (e.g., "EMBEDDING_API_KEY")
+api_key_env_var = "EMBEDDING_API_KEY"
 
 [openviking]
 # OpenViking CLI configuration
