@@ -77,10 +77,9 @@ def _get_embedding_service():
     if _embedding_service is None:
         config = _get_config()
         import os
-        api_key_env = config.embeddings.api_key_env_var or "EMBEDDING_API_KEY"
-        api_key = os.getenv(api_key_env)
+        api_key = os.environ.get("EMBEDDING_API_KEY")
         if not api_key:
-            raise ValueError(f"API key not found in environment variable: {api_key_env}")
+            raise ValueError("EMBEDDING_API_KEY not set in environment")
         
         _embedding_service = _create_embedding_service(
             provider=config.embeddings.provider,

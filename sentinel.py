@@ -100,6 +100,7 @@ class QdrantSentinel:
             base_url=base_url,
             vector_size=self.VECTOR_SIZE,
         )
+        self.ai_client = self.embedding_service
         # Use data_path from config if available, otherwise let OpenVikingClient use its default
         ov_data_path = _config.openviking.data_path if _config and hasattr(_config, 'openviking') and hasattr(_config.openviking, 'data_path') else None
         self.ov_client = OpenVikingClient(data_path=ov_data_path)
@@ -107,7 +108,8 @@ class QdrantSentinel:
 
     def init_db(self):
         """Initialize SQLite DB to store file hashes and OpenViking ID mappings."""
-        with sqlite3.connect(STATE_DB_PATH) as conn:
+        conn = sqlite3.connect(STATE_DB_PATH)
+        try:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS file_states (
                     file_path TEXT PRIMARY KEY,
@@ -128,6 +130,9 @@ class QdrantSentinel:
             # Create indexes for efficient reverse lookups and file-based queries
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ov_resource ON ov_mappings(ov_resource_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ov_file ON ov_mappings(file_path)")
+            conn.commit()
+        finally:
+            conn.close()
 
     def get_file_hash(self, path: Path) -> str:
         """Calculate MD5 hash of a file."""
@@ -144,17 +149,28 @@ class QdrantSentinel:
     def should_ignore(self, path: Path, project_root: Path) -> bool:
         """Check if file should be ignored based on various ignore files."""
         # 1. Hardcoded common patterns as first defense
-        hardcoded_ignore = {
-            '.git', '__pycache__', 'node_modules', '.venv', 'venv', 
-            '.vscode', '.idea', 'dist', 'build'
+        for part in path.parts:
+            part_lower = part.lower()
+            if (
+                part_lower in {'.git', '__pycache__', 'node_modules', '.vscode', '.idea', 'dist', 'build', 'openviking_data'}
+                or 'venv' in part_lower
+                or part_lower == 'env' or 'env.bak' in part_lower
+                or 'cache' in part_lower
+                or part_lower == '.anti_degradation'
+            ):
+                return True
+
+        # Explicitly ignore Sentinel / OpenViking state, index, and config files
+        system_files = {
+            'qdrant_index.toml', 'sentinel_state.db', 'projects.json', 
+            '.env', 'projects copy.json', 'sentinel_state.db-journal',
+            '.env.example'
         }
-        if any(part in hardcoded_ignore for part in path.parts):
+        if path.name in system_files:
             return True
 
-        # 2. Collect all ignore files
+        # 2. Collect only custom ignore files (ignore .gitignore and .git/info/exclude as requested)
         ignore_files = [
-            project_root / ".gitignore",
-            project_root / ".git" / "info" / "exclude",
             project_root / ".rooignore"
         ]
         
@@ -399,24 +415,30 @@ class QdrantSentinel:
         
         all_files = []  # Restored all_files initialization
         project_index_map = {}
-        hardcoded_ignore = {
-            '.git', '__pycache__', 'node_modules', '.venv', 'venv',
-            '.vscode', '.idea', 'dist', 'build'
-        }
-        
         for project_path in self.watch_paths:
             project_root = Path(project_path)
-            project_index_map[str(project_root)] = {"project_path": str(project_root), "scanned_files": []}
+            project_index_map[str(project_root)] = {"project_path": str(project_root)}
             print(f"Scanning: {project_path}")
             try:
                 # Efficient walk that skips ignored directories
                 for root, dirs, files in os.walk(project_path):
-                    # Modify dirs in-place to skip ignored ones
-                    dirs[:] = [d for d in dirs if d not in hardcoded_ignore]
+                    # Modify dirs in-place to skip ignored ones (including dot/backup venvs and caches)
+                    new_dirs = []
+                    for d in dirs:
+                        d_lower = d.lower()
+                        is_ignored = (
+                            d_lower in {'.git', '__pycache__', 'node_modules', '.vscode', '.idea', 'dist', 'build', 'openviking_data'}
+                            or 'venv' in d_lower
+                            or d_lower == 'env' or 'env.bak' in d_lower
+                            or 'cache' in d_lower
+                            or d_lower == '.anti_degradation'
+                        )
+                        if not is_ignored:
+                            new_dirs.append(d)
+                    dirs[:] = new_dirs
                     
                     for file in files:
                         file_path = Path(root) / file
-                        project_index_map[str(project_root)]["scanned_files"].append(str(file_path.relative_to(project_root)))
                         all_files.append((file_path, project_path))
             except Exception as e:
                 print(f"Error scanning {project_path}: {e}")
@@ -429,8 +451,13 @@ class QdrantSentinel:
 
         # Write per-project qdrant_index.toml after parallel indexing
         for project_root_str, index_data in project_index_map.items():
-            self.write_qdrant_index(index_data, str(Path(project_root_str) / "qdrant_index.toml"))
-            self.update_gitignore_for_project(Path(project_root_str))  # Integrate .gitignore update with post-scan TOML write
+            project_root = Path(project_root_str)
+            collection_name = self.get_collection_name(project_root)
+            index_data["qdrant"] = {
+                "collections": [collection_name]
+            }
+            self.write_qdrant_index(index_data, str(project_root / "qdrant_index.toml"))
+            self.update_gitignore_for_project(project_root)  # Integrate .gitignore update with post-scan TOML write
 
     def start_watching(self):
         """Start real-time monitoring."""
@@ -855,10 +882,10 @@ def rebuild_index(
             
             if project_name:
                 # Filter watch_paths by matching collection name
-                # Collection name is derived from path: "project-{path.name.lower()}"
+                # Collection name is derived from path: "qdr-{path.name.lower()}"
                 watch_paths = [
                     wp for wp in watch_paths
-                    if f"project-{Path(wp).name.lower()}" == project_name
+                    if f"qdr-{Path(wp).name.lower()}" == project_name
                 ]
             
             sentinel = QdrantSentinel(watch_paths)

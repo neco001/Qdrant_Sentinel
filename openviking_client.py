@@ -7,12 +7,13 @@ logger = logging.getLogger(__name__)
 # Try to import SyncOpenViking from openviking package
 # Graceful degradation: if import fails, _client will be None
 try:
-    from openviking import SyncOpenViking
+    from openviking import SyncOpenViking, SyncHTTPClient
     _SYNC_OPENVIKING_AVAILABLE = True
 except ImportError:
     SyncOpenViking = None  # type: ignore
+    SyncHTTPClient = None  # type: ignore
     _SYNC_OPENVIKING_AVAILABLE = False
-    logger.warning("SyncOpenViking not available. OpenVikingClient will operate in degraded mode.")
+    logger.warning("SyncOpenViking and SyncHTTPClient not available. OpenVikingClient will operate in degraded mode.")
 
 
 DEFAULT_DATA_PATH = "./openviking_data"
@@ -20,7 +21,7 @@ DEFAULT_DATA_PATH = "./openviking_data"
 
 # Security Validation Helpers - Defense in depth for input sanitization
 def _is_path_traversal_attempt(path: str) -> bool:
-    """Check if path contains path traversal sequences (../ or ..\)."""
+    r"""Check if path contains path traversal sequences (../ or ..\)."""
     if not isinstance(path, str):
         return False
     # Check for both Unix-style (../) and Windows-style (..\) traversal
@@ -58,6 +59,28 @@ def _is_empty_or_whitespace(query: str) -> bool:
     return query.strip() == ""
 
 
+def is_http_server_alive(host='127.0.0.1', port=1933, timeout=0.5) -> bool:
+    """Check if HTTP server is alive by sending a HEAD request.
+
+    Args:
+        host: Server hostname/IP (default: '127.0.0.1')
+        port: Server port (default: 1933)
+        timeout: Connection timeout in seconds (default: 0.5)
+
+    Returns:
+        bool: True if server responds, False otherwise
+    """
+    import urllib.request
+    url = f'http://{host}:{port}/'
+    try:
+        # Use HEAD request for efficiency
+        req = urllib.request.Request(url, method='HEAD')
+        with urllib.request.urlopen(req, timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
 class OpenVikingClient:
     """
     Wrapper for the native OpenViking SyncOpenViking API (embedded mode).
@@ -86,12 +109,15 @@ class OpenVikingClient:
             )
             logger.warning(f"Deprecated cli_path parameter provided: {cli_path} - ignoring, using native mode")
 
+        import os
         # Determine effective data_path
         self._data_path = data_path if data_path is not None else DEFAULT_DATA_PATH
         self._cli_path = cli_path  # Store for backward compat inspection (e.g., tests checking cli_path attr)
+        self.url = os.getenv("OPENVIKING_URL", "http://127.0.0.1:1933")
         
         # Initialize the native SyncOpenViking client with graceful degradation
         self._client: Optional[Any] = None
+        self._is_http_client = False
         
         if not _SYNC_OPENVIKING_AVAILABLE:
             logger.warning(
@@ -100,6 +126,25 @@ class OpenVikingClient:
             )
             return
         
+        # 1. Try to connect to a running HTTP server first to avoid LOCK conflicts
+        if SyncHTTPClient is not None:
+            from urllib.parse import urlparse
+            try:
+                parsed = urlparse(self.url)
+                host = parsed.hostname or '127.0.0.1'
+                port = parsed.port or 1933
+                
+                if is_http_server_alive(host=host, port=port):
+                    self._client = SyncHTTPClient(url=self.url)
+                    self._is_http_client = True
+                    logger.info(f"OpenVikingClient connected to HTTP server at {self.url}")
+                    return
+                else:
+                    logger.debug(f"HTTP server check at {self.url} failed. Falling back to native/embedded.")
+            except Exception as http_err:
+                logger.debug(f"HTTP server check/connection failed: {http_err}. Falling back to native/embedded.")
+
+        # 2. Fall back to local native DB (Embedded Mode)
         try:
             self._client = SyncOpenViking(path=self._data_path)
             logger.info(f"OpenVikingClient initialized natively with data_path: {self._data_path}")
@@ -143,7 +188,11 @@ class OpenVikingClient:
         try:
             # SyncOpenViking.add_resource returns a Dict[str, Any] with resource info
             # build_index=False: Skip redundant embedding since Qdrant already has embeddings
-            result = self._client.add_resource(path, build_index=False)
+            # SyncHTTPClient does not support the build_index keyword argument.
+            if self._is_http_client:
+                result = self._client.add_resource(path)
+            else:
+                result = self._client.add_resource(path, build_index=False)
             
             if result is None:
                 logger.warning(f"SyncOpenViking.add_resource returned None for path: {path}")

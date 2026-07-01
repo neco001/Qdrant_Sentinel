@@ -31,23 +31,34 @@ data_root = "."
 state_db = "sentinel_state.db"
 """)
             
-            config = load_config(tmpdir)
+            # Clear env vars that might leak from host environment
+            old_env = {}
+            for key in ["EMBEDDING_PROVIDER", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL_NAME", "EMBEDDING_DIMENSION", "EMBEDDING_API_KEY"]:
+                if key in os.environ:
+                    old_env[key] = os.environ.pop(key)
             
-            # Verify Qdrant config
-            assert config.qdrant.url == "http://localhost:6333"
-            
-            # Verify Embeddings config (CRITICAL for vector compatibility)
-            assert config.embeddings.base_url == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-            assert config.embeddings.model_name == "text-embedding-v4"
-            assert config.embeddings.dimension == 1024
-            
-            # Verify OpenViking config
-            assert config.openviking.cli_path == "ov"
-            assert config.openviking.enabled is True
-            
-            # Verify Paths config
-            assert config.paths.data_root == "."
-            assert config.paths.state_db == "sentinel_state.db"
+            try:
+                config = load_config(tmpdir)
+                
+                # Verify Qdrant config
+                assert config.qdrant.url == "http://localhost:6333"
+                
+                # Verify Embeddings config (CRITICAL for vector compatibility)
+                assert config.embeddings.base_url == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+                assert config.embeddings.model_name == "text-embedding-v4"
+                assert config.embeddings.dimension == 1024
+                
+                # Verify OpenViking config
+                assert config.openviking.cli_path == "ov"
+                assert config.openviking.enabled is True
+                
+                # Verify Paths config
+                assert config.paths.data_root == "."
+                assert config.paths.state_db == "sentinel_state.db"
+            finally:
+                # Restore env vars
+                for key, val in old_env.items():
+                    os.environ[key] = val
 
     def test_load_config_missing_file(self):
         """Verify ConfigurationError raised when config file missing."""
@@ -79,8 +90,8 @@ state_db = "sentinel_state.db"
             
             assert "Missing required key in [qdrant] section" in str(exc_info.value)
 
-    def test_load_config_missing_embeddings_section(self):
-        """Verify ConfigurationError raised when [embeddings] section missing."""
+    def test_load_config_missing_embeddings_section_env_provider_set(self):
+        """Verify config loads successfully when [embeddings] missing but EMBEDDING_PROVIDER env var set."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "qdrant_index.toml"
             config_path.write_text("""
@@ -92,10 +103,46 @@ data_root = "."
 state_db = "sentinel_state.db"
 """)
             
+            # Set env vars for embedding config
+            os.environ["EMBEDDING_PROVIDER"] = "openai_compatible"
+            os.environ["EMBEDDING_BASE_URL"] = "https://api.openai.com/v1"
+            os.environ["EMBEDDING_MODEL_NAME"] = "text-embedding-3-small"
+            os.environ["EMBEDDING_DIMENSION"] = "1536"
+            
+            try:
+                config = load_config(tmpdir)
+                
+                # Verify env vars were used
+                assert config.embeddings.provider == "openai_compatible"
+                assert config.embeddings.base_url == "https://api.openai.com/v1"
+                assert config.embeddings.model_name == "text-embedding-3-small"
+                assert config.embeddings.dimension == 1536
+            finally:
+                # Cleanup env vars
+                for key in ["EMBEDDING_PROVIDER", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL_NAME", "EMBEDDING_DIMENSION"]:
+                    os.environ.pop(key, None)
+
+    def test_load_config_missing_embeddings_section_no_env(self):
+        """Verify ConfigurationError raised when [embeddings] missing AND no env vars set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "qdrant_index.toml"
+            config_path.write_text("""
+[qdrant]
+url = "http://localhost:6333"
+
+[paths]
+data_root = "."
+state_db = "sentinel_state.db"
+""")
+            
+            # Ensure no env vars interfere
+            for key in ["EMBEDDING_PROVIDER", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL_NAME", "EMBEDDING_DIMENSION"]:
+                os.environ.pop(key, None)
+            
             with pytest.raises(ConfigurationError) as exc_info:
                 load_config(tmpdir)
             
-            assert "Missing required key in [embeddings] section" in str(exc_info.value)
+            assert "EMBEDDING_PROVIDER" in str(exc_info.value)
 
     def test_load_config_openviking_defaults(self):
         """Verify OpenViking config uses defaults when section missing."""
@@ -221,3 +268,74 @@ url = "http://localhost:6333"
                 load_config(tmpdir)
             
             assert "Failed to parse" in str(exc_info.value)
+
+    def test_env_vars_override_toml(self):
+        """Verify environment variables override TOML values for embedding config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "qdrant_index.toml"
+            config_path.write_text("""
+[qdrant]
+url = "http://localhost:6333"
+
+[embeddings]
+provider = "alibaba"
+base_url = "https://dashscope.aliyuncs.com/v1"
+model_name = "text-embedding-v3"
+dimension = 768
+
+[paths]
+data_root = "."
+state_db = "sentinel_state.db"
+""")
+            
+            # Set env vars that should override
+            os.environ["EMBEDDING_PROVIDER"] = "byteplus_ark"
+            os.environ["EMBEDDING_BASE_URL"] = "https://ark.byteplus.com/v1"
+            os.environ["EMBEDDING_MODEL_NAME"] = "skylark-embedding"
+            os.environ["EMBEDDING_DIMENSION"] = "1024"
+            os.environ["EMBEDDING_API_KEY"] = "NEW_KEY"
+            
+            try:
+                config = load_config(tmpdir)
+                
+                # Verify env vars overrode TOML
+                assert config.embeddings.provider == "byteplus_ark"
+                assert config.embeddings.base_url == "https://ark.byteplus.com/v1"
+                assert config.embeddings.model_name == "skylark-embedding"
+                assert config.embeddings.dimension == 1024
+            finally:
+                for key in ["EMBEDDING_PROVIDER", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL_NAME",
+                            "EMBEDDING_DIMENSION", "EMBEDDING_API_KEY"]:
+                    os.environ.pop(key, None)
+
+    def test_toml_values_used_when_no_env(self):
+        """Verify TOML values are used when env vars not set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "qdrant_index.toml"
+            config_path.write_text("""
+[qdrant]
+url = "http://localhost:6333"
+
+[embeddings]
+provider = "dashscope"
+base_url = "https://dashscope.aliyuncs.com/v1"
+model_name = "text-embedding-v4"
+dimension = 1024
+
+[paths]
+data_root = "."
+state_db = "sentinel_state.db"
+""")
+            
+            # Ensure no env vars interfere
+            for key in ["EMBEDDING_PROVIDER", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL_NAME",
+                        "EMBEDDING_DIMENSION", "EMBEDDING_API_KEY"]:
+                os.environ.pop(key, None)
+            
+            config = load_config(tmpdir)
+            
+            # Verify TOML values used
+            assert config.embeddings.provider == "dashscope"
+            assert config.embeddings.base_url == "https://dashscope.aliyuncs.com/v1"
+            assert config.embeddings.model_name == "text-embedding-v4"
+            assert config.embeddings.dimension == 1024

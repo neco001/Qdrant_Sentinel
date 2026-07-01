@@ -15,17 +15,16 @@ class QdrantConfig:
 
 @dataclass
 class EmbeddingsConfig:
-    provider: str
+    provider: str = 'openai_compatible'
     base_url: Optional[str] = None
     model_name: Optional[str] = None
     dimension: Optional[int] = None
-    api_key_env_var: Optional[str] = None
 
 @dataclass
 class OpenVikingConfig:
     cli_path: str
     enabled: bool
-    data_path: str
+    data_path: str = "./openviking_data"
 
 @dataclass
 class PathsConfig:
@@ -84,19 +83,34 @@ def load_config(project_root: Optional[str] = None) -> AppConfig:
 
     # Validate and extract Embeddings config
     # CRITICAL: This config is shared between Sentinel and MCP to ensure vector compatibility
-    try:
-        emb_section = data["embeddings"]
-        # provider is required; other fields can come from factory defaults
-        provider = emb_section["provider"]
-        embeddings = EmbeddingsConfig(
-            provider=provider,
-            base_url=emb_section.get("base_url"),
-            model_name=emb_section.get("model_name"),
-            dimension=emb_section.get("dimension"),
-            api_key_env_var=emb_section.get("api_key_env_var"),
+    # Environment variables override TOML values for unified .env-based configuration
+    emb_section = data.get("embeddings", {})
+    
+    # Read from env vars (override TOML if set)
+    env_provider = os.environ.get("EMBEDDING_PROVIDER") or emb_section.get("provider")
+    env_base_url = os.environ.get("EMBEDDING_BASE_URL") or emb_section.get("base_url")
+    env_model_name = os.environ.get("EMBEDDING_MODEL_NAME") or emb_section.get("model_name")
+    env_dimension = os.environ.get("EMBEDDING_DIMENSION") or emb_section.get("dimension")
+    
+    # Provider is required - must be set in either .env or TOML
+    if not env_provider:
+        raise ConfigurationError(
+            "Missing EMBEDDING_PROVIDER. Set EMBEDDING_PROVIDER in .env or [embeddings] provider in qdrant_index.toml"
         )
-    except KeyError as e:
-        raise ConfigurationError(f"Missing required key in [embeddings] section: {e}")
+    
+    # Convert dimension to int if it's a string from env
+    if isinstance(env_dimension, str):
+        try:
+            env_dimension = int(env_dimension)
+        except (ValueError, TypeError):
+            env_dimension = None
+    
+    embeddings = EmbeddingsConfig(
+        provider=env_provider,
+        base_url=env_base_url,
+        model_name=env_model_name,
+        dimension=env_dimension,
+    )
 
     # Validate and extract OpenViking config
     try:

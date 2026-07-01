@@ -48,7 +48,6 @@ class TestMCPServerEmbeddingFactory:
         mock_config.embeddings.model_name = "text-embedding-v4"
         mock_config.embeddings.base_url = "https://example.com/v1"
         mock_config.embeddings.dimension = 1024
-        mock_config.embeddings.api_key_env_var = "EMBEDDING_API_KEY"
         mock_config.paths.state_db = ":memory:"
         mock_config.openviking.cli_path = "ov"
         mock_config.openviking.enabled = True

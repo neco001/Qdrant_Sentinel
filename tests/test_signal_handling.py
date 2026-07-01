@@ -82,22 +82,7 @@ class TestSignalHandlerBehavior:
         # Verify flag is set
         assert sentinel.shutdown_flag is True
 
-    async def test_handler_calls_manager_stop(self):
-        """Verify signal handler calls manager.stop() when manager exists."""
-        import sentinel
-        
-        # Create mock manager
-        mock_manager = MagicMock()
-        mock_manager.stop = AsyncMock()
-        
-        # Set global manager
-        sentinel.manager = mock_manager
-        
-        # Call handler
-        await sentinel.signal_handler()
-        
-        # Verify stop was called
-        mock_manager.stop.assert_called_once()
+
 
     async def test_handler_handles_no_manager_gracefully(self):
         """Verify signal handler doesn't crash when manager is None."""

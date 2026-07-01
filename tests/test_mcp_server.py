@@ -39,7 +39,7 @@ class TestSearchQdrant:
         """Verify successful semantic search returns results."""
         with patch('mcp_server.server._load_config', return_value=mock_config), \
              patch('mcp_server.server._create_qdrant_client', return_value=mock_qdrant_client), \
-             patch('mcp_server.server._create_embedding_client'):
+             patch('mcp_server.server._create_embedding_service'):
             from mcp_server.server import search_qdrant
             
             result = search_qdrant("test_collection", "search query", limit=5)
@@ -54,7 +54,7 @@ class TestSearchQdrant:
         
         with patch('mcp_server.server._load_config', return_value=mock_config), \
              patch('mcp_server.server._create_qdrant_client', return_value=mock_qdrant_client), \
-             patch('mcp_server.server._create_embedding_client'):
+             patch('mcp_server.server._create_embedding_service'):
             from mcp_server.server import search_qdrant
             
             with pytest.raises(Exception, match="Collection not found"):
@@ -64,7 +64,7 @@ class TestSearchQdrant:
         """Verify read-only safety: uses search() not upsert()."""
         with patch('mcp_server.server._load_config', return_value=mock_config), \
              patch('mcp_server.server._create_qdrant_client', return_value=mock_qdrant_client), \
-             patch('mcp_server.server._create_embedding_client'):
+             patch('mcp_server.server._create_embedding_service'):
             from mcp_server.server import search_qdrant
             
             search_qdrant("test_collection", "query")

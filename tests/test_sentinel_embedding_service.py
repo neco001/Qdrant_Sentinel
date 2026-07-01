@@ -51,8 +51,8 @@ class TestSentinelEmbeddingServiceIntegration:
         """
         with patch('shared_config.load_config', return_value=mock_config):
             # Track calls to both OpenAI and EmbeddingServiceFactory
-            with patch('sentinel.OpenAI') as mock_openai_class, \
-                 patch('sentinel.EmbeddingServiceFactory') as mock_factory_class:
+            with patch('sentinel.OpenAI', create=True) as mock_openai_class, \
+                 patch('embedding_service.factory.EmbeddingServiceFactory') as mock_factory_class:
                 
                 # Configure mock factory to return a mock service
                 mock_service = MagicMock()
@@ -97,7 +97,7 @@ class TestSentinelEmbeddingServiceIntegration:
             # Patch everything we need
             with patch('sentinel.QdrantClient') as mock_qdrant_class, \
                  patch('sentinel.OpenVikingClient') as mock_ov_class, \
-                 patch('sentinel.EmbeddingServiceFactory') as mock_factory_class, \
+                 patch('embedding_service.factory.EmbeddingServiceFactory') as mock_factory_class, \
                  patch('sentinel.sqlite3') as mock_sqlite:
                 
                 # Configure mock embedding service
@@ -160,7 +160,7 @@ class TestSentinelEmbeddingServiceIntegration:
         with patch('shared_config.load_config', return_value=mock_config):
             with patch('sentinel.QdrantClient') as mock_qdrant_class, \
                  patch('sentinel.OpenVikingClient') as mock_ov_class, \
-                 patch('sentinel.EmbeddingServiceFactory') as mock_factory_class, \
+                 patch('embedding_service.factory.EmbeddingServiceFactory') as mock_factory_class, \
                  patch('sentinel.sqlite3'):
                 
                 # Configure mock service with different vector size
@@ -206,7 +206,7 @@ class TestSentinelEmbeddingServiceIntegration:
         with patch('shared_config.load_config', return_value=mock_config):
             with patch('sentinel.QdrantClient') as mock_qdrant_class, \
                  patch('sentinel.OpenVikingClient') as mock_ov_class, \
-                 patch('sentinel.EmbeddingServiceFactory') as mock_factory_class, \
+                 patch('embedding_service.factory.EmbeddingServiceFactory') as mock_factory_class, \
                  patch('sentinel.sqlite3'):
                 
                 mock_service = MagicMock()

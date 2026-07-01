@@ -1,0 +1,18 @@
+{
+  "watch_paths": [
+    "c:/Users/pawel/OneDrive/sialababamak",
+    "c:/Repos/_Toolbox/mcp_servers/mcpvault",
+    "c:/Repos/Job_contact_crusher",
+    "c:/Repos/secureExamPDF",
+    "C:/Repos/_Toolbox/mcp_servers/Qwen-mcp/qwen-coding-local",
+    "C:/Repos/szybko_czytam",
+    "C:/Repos/overseas",
+    "C:/Repos/_Toolbox/qdrant_index",
+    "C:/Repos/_Toolbox/mcp_servers/qdrant2",
+    "C:/Repos/semanPass",
+    "C:/Repos/Project_JobCrusher",
+    "C:/Repos/_Data_Warehouse",
+    "C:/Repos/Specter_Command",
+    "C:/Users/pawel/OneDrive/Biznes/Baseus"
+  ]
+}

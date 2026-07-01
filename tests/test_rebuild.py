@@ -16,6 +16,32 @@ import shutil
 import json
 
 
+@pytest.fixture(autouse=True)
+def mock_sentinel_config():
+    """Mock projects.json loading to return test watch paths, avoiding scanning real project."""
+    mock_config_data = {
+        "watch_paths": [
+            "C:/projects/a-mycorp",
+            "C:/projects/tools",
+            "C:/projects/utils"
+        ]
+    }
+    
+    from pathlib import Path as RealPath
+    original_exists = RealPath.exists
+    
+    def exists_mock(self, *args, **kwargs):
+        if str(self).endswith("projects.json"):
+            return True
+        return original_exists(self, *args, **kwargs)
+        
+    with patch('sentinel.json.load', return_value=mock_config_data), \
+         patch('pathlib.Path.exists', new=exists_mock), \
+         patch('sentinel.QdrantSentinel.write_qdrant_index'), \
+         patch('sentinel.QdrantSentinel.update_gitignore_for_project'):
+        yield
+
+
 @pytest.fixture
 def mock_qdrant_client():
     """Mock Qdrant client."""
@@ -23,11 +49,11 @@ def mock_qdrant_client():
     
     # Create mock collections with actual name attributes
     col1 = MagicMock()
-    col1.name = "project-a-mycorp"
+    col1.name = "qdr-a-mycorp"
     col2 = MagicMock()
-    col2.name = "project-b-tools"
+    col2.name = "qdr-tools"
     col3 = MagicMock()
-    col3.name = "project-c-utils"
+    col3.name = "qdr-utils"
     
     client.get_collections.return_value = MagicMock(collections=[col1, col2, col3])
     client.delete_collection.return_value = None
@@ -70,6 +96,7 @@ def mock_openviking_client():
         {"id": "ov_resource_1", "path": "path1.py"},
         {"id": "ov_resource_2", "path": "path2.py"},
     ]
+    client.add_resource.return_value = "mock_resource_id"
     return client
 
 
@@ -149,10 +176,13 @@ class TestRebuildBackup:
             
             # Create real SQLite database
             state_db = temp_dir / "sentinel_state.db"
-            with sqlite3.connect(str(state_db)) as conn:
-                conn.execute("CREATE TABLE IF NOT EXISTS test (id INTEGER)")
-                conn.execute("INSERT INTO test VALUES (1)")
-                conn.commit()
+            db_conn = sqlite3.connect(str(state_db))
+            try:
+                db_conn.execute("CREATE TABLE IF NOT EXISTS test (id INTEGER)")
+                db_conn.execute("INSERT INTO test VALUES (1)")
+                db_conn.commit()
+            finally:
+                db_conn.close()
             
             from sentinel import rebuild_index
             
@@ -273,36 +303,17 @@ class TestRebuildProjectSpecific:
         """Verify only specified project's collection is rebuilt."""
         cursor, conn = mock_sqlite_conn
         
-        # Create mock projects.json
-        projects_json = temp_dir / "projects.json"
-        projects_json.write_text(json.dumps({
-            "watch_paths": [
-                "C:/projects/mycorp",
-                "C:/projects/tools",
-                "C:/projects/utils"
-            ]
-        }))
-        
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
              patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
-             patch('sentinel.confirm_rebuild', return_value=True), \
-             patch('sentinel.Path') as mock_path:
-            
-            # Make Path return temp_dir for projects.json
-            original_path = Path
-            def path_side_effect(*args, **kwargs):
-                if args and args[0].endswith('projects.json'):
-                    return projects_json
-                return original_path(*args, **kwargs)
-            mock_path.side_effect = path_side_effect
+             patch('sentinel.confirm_rebuild', return_value=True):
             
             from sentinel import rebuild_index
             
-            rebuild_index(project_name="project-a-mycorp")
+            rebuild_index(project_name="qdr-a-mycorp")
             
-            # Verify only project-a-mycorp collection was deleted
-            mock_qdrant_client.delete_collection.assert_called_once_with("project-a-mycorp")
+            # Verify only qdr-a-mycorp collection was deleted
+            mock_qdrant_client.delete_collection.assert_called_once_with("qdr-a-mycorp")
 
     def test_rebuild_project_specific_filters_sqlite_queries(
         self, mock_qdrant_client, mock_sqlite_conn, mock_openviking_client, temp_dir
@@ -310,33 +321,14 @@ class TestRebuildProjectSpecific:
         """Verify SQLite queries are filtered by project name."""
         cursor, conn = mock_sqlite_conn
         
-        # Create mock projects.json
-        projects_json = temp_dir / "projects.json"
-        projects_json.write_text(json.dumps({
-            "watch_paths": [
-                "C:/projects/mycorp",
-                "C:/projects/tools",
-                "C:/projects/utils"
-            ]
-        }))
-        
         with patch('sentinel.get_qdrant_client', return_value=mock_qdrant_client), \
              patch('sentinel.get_db_connection', return_value=conn), \
              patch('sentinel.OpenVikingClient', return_value=mock_openviking_client), \
-             patch('sentinel.confirm_rebuild', return_value=True), \
-             patch('sentinel.Path') as mock_path:
-            
-            # Make Path return temp_dir for projects.json
-            original_path = Path
-            def path_side_effect(*args, **kwargs):
-                if args and args[0].endswith('projects.json'):
-                    return projects_json
-                return original_path(*args, **kwargs)
-            mock_path.side_effect = path_side_effect
+             patch('sentinel.confirm_rebuild', return_value=True):
             
             from sentinel import rebuild_index
             
-            rebuild_index(project_name="project-a-mycorp")
+            rebuild_index(project_name="qdr-a-mycorp")
             
             # Verify DELETE queries include project filter
             delete_calls = [
@@ -345,7 +337,7 @@ class TestRebuildProjectSpecific:
             ]
             
             # At least one DELETE should have WHERE clause with project
-            has_project_filter = any('project' in call.lower() for call in delete_calls)
+            has_project_filter = any('qdr-a-mycorp' in call.lower() for call in delete_calls)
             assert has_project_filter, "DELETE queries should filter by project"
 
     def test_rebuild_all_projects_when_none_specified(
