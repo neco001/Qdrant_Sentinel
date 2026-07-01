@@ -3,14 +3,14 @@
 Provides read-only tools for semantic search, context retrieval, and
 structural navigation across indexed codebases.
 """
+import logging
 import sqlite3
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from qdrant_client import QdrantClient
+logger = logging.getLogger(__name__)
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from qdrant_client import QdrantClient
 
 from shared_config import load_config
 from embedding_service.factory import EmbeddingServiceFactory
@@ -156,16 +156,16 @@ def search_qdrant(collection_name: str, query_text: str, limit: int = 5) -> List
     # Generate embedding for query using factory service
     query_vector = embedding_service.embed(query_text)
     
-    # Perform search (read-only)
-    results = qdrant_client.search(
+    # Perform search (read-only) - qdrant-client v1.18.0 uses query_points()
+    response = qdrant_client.query_points(
         collection_name=collection_name,
-        query_vector=query_vector,
+        query=query_vector,
         limit=limit
     )
     
-    # Format results
+    # Format results from QueryResponse.points
     formatted_results = []
-    for result in results:
+    for result in response.points:
         formatted_results.append({
             "id": str(result.id),
             "score": result.score,
@@ -201,53 +201,75 @@ def get_search_context(qdrant_id: str, tier: str = "L1") -> List[Dict[str, Any]]
     try:
         resources = ov_client.find_resources(query)
         return resources
-    except (FileNotFoundError, RuntimeError, Exception) as e:
-        # Graceful degradation: return empty list on OpenViking failures
-        # This prevents the MCP tool from crashing if OpenViking is unavailable
+    except FileNotFoundError as e:
+        logger.error("OpenViking CLI not found: %s", e, exc_info=True)
+        return []
+    except RuntimeError as e:
+        logger.error("OpenViking runtime error: %s", e, exc_info=True)
+        return []
+    except Exception as e:
+        logger.error("Unexpected error in get_search_context: %s", e, exc_info=True)
         return []
 
 
 def expand_context(uri: str, direction: str = "both") -> Dict[str, List[Dict[str, Any]]]:
-    """Expand context by finding parent/child relationships in SQLite.
+    """Expand context by finding parent/child relationships via file_path hierarchy.
+    
+    Parents: records whose file_path is a prefix of the target's file_path.
+    Children: records whose file_path starts with the target's file_path + '/'.
     
     Args:
-        uri: URI of the resource to expand context for
-        direction: "parent" (find parents), "child" (find children), or "both"
+        uri: URI of the resource (e.g. file:///src/module.py)
+        direction: "parent", "child", or "both"
     
     Returns:
-        Dictionary with 'parents' and/or 'children' lists containing Qdrant IDs
-    
-    Raises:
-        sqlite3.Error: If database connection fails
+        Dictionary with 'parents' and/or 'children' lists containing qdrant_id + uri
     """
     result = {}
-    
-    # Connect to SQLite in read-only mode
     db_path = _get_state_db_path()
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     
     try:
         cursor = conn.cursor()
         
+        # Resolve URI to file_path
+        cursor.execute(
+            "SELECT file_path FROM ov_mappings WHERE ov_resource_id = ?",
+            (uri,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return result
+        
+        file_path = row[0]
+        
         if direction in ["parent", "both"]:
-            # Find parent Qdrant IDs
+            # Parents: records whose file_path is a prefix of target's file_path
             cursor.execute("""
-                SELECT qdrant_id FROM ov_mappings 
-                WHERE ov_resource_id = ?
-            """, (uri,))
+                SELECT qdrant_id, ov_resource_id FROM ov_mappings
+                WHERE ? LIKE file_path || '%'
+                  AND file_path != ?
+                ORDER BY file_path DESC
+            """, (file_path, file_path))
             
-            parents = [{"qdrant_id": row[0]} for row in cursor.fetchall()]
-            result["parents"] = parents
+            result["parents"] = [
+                {"qdrant_id": r[0], "uri": r[1]}
+                for r in cursor.fetchall()
+            ]
         
         if direction in ["child", "both"]:
-            # Find child Qdrant IDs
+            # Children: records whose file_path starts with target's file_path + /
             cursor.execute("""
-                SELECT ov_resource_id FROM ov_mappings 
-                WHERE qdrant_id = ?
-            """, (uri,))
+                SELECT qdrant_id, ov_resource_id FROM ov_mappings
+                WHERE file_path LIKE ? || '%'
+                  AND file_path != ?
+                ORDER BY file_path ASC
+            """, (file_path + "/", file_path))
             
-            children = [{"uri": row[0]} for row in cursor.fetchall()]
-            result["children"] = children
+            result["children"] = [
+                {"qdrant_id": r[0], "uri": r[1]}
+                for r in cursor.fetchall()
+            ]
         
         return result
     
@@ -277,8 +299,8 @@ def find_by_structure(path_pattern: str) -> List[Dict[str, Any]]:
         # Use LIKE for pattern matching (read-only)
         pattern = path_pattern.replace("*", "%")
         cursor.execute("""
-            SELECT qdrant_id, ov_resource_id, indexed_at 
-            FROM ov_mappings 
+            SELECT qdrant_id, ov_resource_id, created_at
+            FROM ov_mappings
             WHERE ov_resource_id LIKE ?
         """, (pattern,))
         
@@ -287,7 +309,7 @@ def find_by_structure(path_pattern: str) -> List[Dict[str, Any]]:
             results.append({
                 "qdrant_id": row[0],
                 "uri": row[1],
-                "indexed_at": row[2]
+                "created_at": row[2]
             })
         
         return results
@@ -295,48 +317,3 @@ def find_by_structure(path_pattern: str) -> List[Dict[str, Any]]:
     finally:
         conn.close()
 
-
-if __name__ == "__main__":
-    import logging
-    import anyio
-    from mcp.server.stdio import stdio_server
-    from mcp.server.session import ServerSession
-    from mcp.server.models import InitializationOptions
-    from mcp.types import ServerCapabilities
-    import importlib.metadata
-
-    # Set up logging
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger("mcp_server")
-
-    async def receive_loop(session: ServerSession):
-        logger.info("Starting MCP server receive loop")
-        async for message in session.incoming_messages:
-            if isinstance(message, Exception):
-                logger.error("Error: %s", message)
-                continue
-            logger.info("Received message: %s", message)
-
-    async def main():
-        try:
-            version = importlib.metadata.version("mcp")
-            async with stdio_server() as (read_stream, write_stream):
-                async with (
-                    ServerSession(
-                        read_stream,
-                        write_stream,
-                        InitializationOptions(
-                            server_name="Qdrant+OpenViking MCP Server",
-                            server_version=version,
-                            capabilities=ServerCapabilities(),
-                        ),
-                    ) as session,
-                    write_stream,
-                ):
-                    await receive_loop(session)
-        except Exception as e:
-            logger.error("Server error: %s", e)
-            raise
-
-    logger.info("Starting Qdrant+OpenViking MCP Server")
-    anyio.run(main, backend="trio")

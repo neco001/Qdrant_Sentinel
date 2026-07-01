@@ -8,10 +8,7 @@ from typing import Dict, Any, List
 from mcp.server import Server
 from mcp import stdio_server, Tool
 
-# Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from shared_config import load_config
+from shared_config import load_config, AppConfig
 from mcp_server.server import (
     search_qdrant,
     get_search_context,
@@ -58,7 +55,7 @@ def create_server() -> Server:
         raise RuntimeError("Configuration is missing")
     
     # Validate required configuration sections
-    if not isinstance(config, dict) or 'qdrant' not in config:
+    if not isinstance(config, AppConfig) or not hasattr(config, 'qdrant'):
         raise RuntimeError("Qdrant configuration is missing")
     
     # Create MCP server
@@ -177,20 +174,26 @@ def create_server() -> Server:
     return server
 
 
+async def run_server():
+    """Async entry point for MCP server."""
+    server = create_server()
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            server.create_initialization_options()
+        )
+
+
 def main():
     """Main entry point for MCP server.
     
-    Creates server and runs stdio_server context manager.
+    Creates server and runs stdio_server async context manager.
     Handles KeyboardInterrupt gracefully.
     """
+    import asyncio
     try:
-        server = create_server()
-        with stdio_server() as (read_stream, write_stream):
-            server.run(
-                read_stream,
-                write_stream,
-                server.create_initialization_options()
-            )
+        asyncio.run(run_server())
     except KeyboardInterrupt:
         # Graceful shutdown on Ctrl+C
         sys.exit(0)

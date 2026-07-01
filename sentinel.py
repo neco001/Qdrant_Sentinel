@@ -25,6 +25,12 @@ import uuid
 import tomli_w
 import threading
 
+# --- Neutralize readabilipy's node.exe probe (causes flashing windows + AVG/Avast 0x800700e8) ---
+try:
+    import readabilipy.simple_json as _rpy_simple
+    _rpy_simple.have_node = lambda: False  # Force pure-Python mode; never spawn node.exe
+except ImportError:
+    pass  # readabilipy not installed — nothing to patch
 # Global shutdown flag for PM2 compatibility
 shutdown_flag = False
 
@@ -162,10 +168,14 @@ class QdrantSentinel:
 
         # Explicitly ignore Sentinel / OpenViking state, index, and config files
         system_files = {
-            'qdrant_index.toml', 'sentinel_state.db', 'projects.json', 
+            'qdrant_index.toml', 'sentinel_state.db', 'projects.json',
             '.env', 'projects copy.json', 'sentinel_state.db-journal',
-            '.env.example'
+            '.env.example', 'install_log.txt', 'uv.lock', 'ecosystem.config.js',
+            'run_sentinel.bat', 'start_sentinel.vbs', '$null'
         }
+        # Also ignore lock files and install/build logs by pattern
+        if path.suffix.lower() in {'.lock'} or path.name.lower().startswith('install_log'):
+            return True
         if path.name in system_files:
             return True
 
@@ -326,26 +336,33 @@ class QdrantSentinel:
                 ))
 
             if points:
-                # Dual-write pipeline: Qdrant + OpenViking
+                # Add resource to OpenViking ONCE per file (not per chunk)
+                ov_id = None
+                ov_file_path = str(file_path) if os.path.isabs(str(file_path)) else str(project_root / rel_path)
+                try:
+                    ov_id = self.ov_client.add_resource(path=ov_file_path)
+                except Exception as ov_err:
+                    logger.warning(f"OpenViking add_resource failed for {ov_file_path}: {ov_err}. Qdrant-only mode.")
+
+                # Upsert all Qdrant points in batch
+                try:
+                    self.client.upsert(collection_name=collection_name, points=points)
+                except Exception as qdr_err:
+                    logger.error(f"Qdrant batch upsert failed for {file_path}: {qdr_err}")
+                    return
+
+                # Store OV mapping for all points (single ov_id per file)
                 with sqlite3.connect(STATE_DB_PATH) as conn:
-                    for point in points:
-                        # Convert PointStruct to dict for index_point_dual_write
-                        point_dict = {
-                            'id': point.id,
-                            'vector': point.vector,
-                            'payload': point.payload
-                        }
-                        # Call dual-write function (graceful degradation handled internally)
-                        success = index_point_dual_write(
-                            point=point_dict,
-                            qdrant_client=self.client,
-                            ov_client=self.ov_client,
-                            conn=conn,
-                            collection_name=collection_name,
-                            project_root=project_root
-                        )
-                        if not success:
-                            logger.error(f"Failed to index point for {file_path} in collection {collection_name}")
+                    if ov_id is not None:
+                        for point in points:
+                            try:
+                                conn.execute(
+                                    "INSERT INTO ov_mappings (qdrant_id, ov_resource_id, file_path) VALUES (?, ?, ?)",
+                                    (str(point.id), ov_id, rel_path)
+                                )
+                            except sqlite3.Error as db_err:
+                                logger.warning(f"SQLite ov_mapping insert failed for {point.id}: {db_err}")
+                        conn.commit()
 
             with sqlite3.connect(STATE_DB_PATH) as conn:
                 conn.execute("INSERT OR REPLACE INTO file_states (file_path, hash, last_indexed, collection_name) VALUES (?, ?, ?, ?)",
@@ -812,6 +829,14 @@ def rebuild_index(
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            # Ensure tables exist before querying (DB may be fresh after cleanup)
+            conn.execute("""CREATE TABLE IF NOT EXISTS file_states (
+                file_path TEXT PRIMARY KEY, hash TEXT, last_indexed REAL, collection_name TEXT)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS ov_mappings (
+                qdrant_id TEXT PRIMARY KEY, ov_resource_id TEXT NOT NULL, file_path TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ov_resource ON ov_mappings(ov_resource_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ov_file ON ov_mappings(file_path)")
             
             # Count file_states
             cursor.execute("SELECT COUNT(*) FROM file_states")
@@ -872,7 +897,15 @@ def rebuild_index(
                 logger.info("✅ Cleared SQLite tables")
         
         logger.info(f"✅ Deleted Qdrant collections: {len(collections)}")
-        
+
+        # Delete OpenViking data directory on full rebuild only
+        # OV data is shared across all projects — only safe to wipe when rebuilding everything
+        if not project_name:
+            ov_data = Path(ov_data_path) if ov_data_path else Path("./openviking_data")
+            if ov_data.exists():
+                shutil.rmtree(ov_data, ignore_errors=True)
+                logger.info(f"✅ Deleted OpenViking data: {ov_data}")
+
         # Step 5: Rescan and Reindex
         config_path = Path(__file__).parent / "projects.json"
         if config_path.exists():

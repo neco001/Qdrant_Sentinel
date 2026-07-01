@@ -1,5 +1,6 @@
 import logging
 import warnings
+import threading
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,7 @@ class OpenVikingClient:
         # Initialize the native SyncOpenViking client with graceful degradation
         self._client: Optional[Any] = None
         self._is_http_client = False
+        self._lock = threading.Lock()
         
         if not _SYNC_OPENVIKING_AVAILABLE:
             logger.warning(
@@ -204,7 +206,8 @@ class OpenVikingClient:
             if self._is_http_client:
                 result = self._client.add_resource(path)
             else:
-                result = self._client.add_resource(path, build_index=False)
+                with self._lock:
+                    result = self._client.add_resource(path, build_index=False)
             
             if result is None:
                 logger.warning(f"SyncOpenViking.add_resource returned None for path: {path}")
@@ -217,6 +220,9 @@ class OpenVikingClient:
                     or result.get("temp_file_id")
                     or result.get("resource_id")
                     or result.get("uri")
+                    or result.get("root_uri")
+                    or result.get("temp_uri")
+                    or result.get("task_id")
                 )
                 if resource_id is not None:
                     return str(resource_id)
@@ -253,7 +259,11 @@ class OpenVikingClient:
         try:
             # SyncOpenViking.find returns an iterable of FindResult objects (or similar)
             # We need to convert them to dictionaries
-            results_iterator = self._client.find(query)
+            if self._is_http_client:
+                results_iterator = self._client.find(query)
+            else:
+                with self._lock:
+                    results_iterator = self._client.find(query)
             
             if results_iterator is None:
                 return []

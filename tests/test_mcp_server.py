@@ -18,12 +18,18 @@ class TestSearchQdrant:
     
     @pytest.fixture
     def mock_qdrant_client(self):
-        """Mock Qdrant client."""
+        """Mock Qdrant client (v1.18.0 API)."""
+        scored_point = MagicMock()
+        scored_point.id = "1"
+        scored_point.score = 0.95
+        scored_point.payload = {"text": "test content", "file_path": "test.py"}
+
+        query_response = MagicMock()
+        query_response.points = [scored_point]
+
         client = MagicMock()
         client.get_collection.return_value = MagicMock(points_count=100)
-        client.search.return_value = [
-            MagicMock(id="1", score=0.95, payload={"text": "test content", "file_path": "test.py"})
-        ]
+        client.query_points.return_value = query_response
         return client
     
     @pytest.fixture
@@ -46,7 +52,7 @@ class TestSearchQdrant:
             
             assert result is not None
             assert len(result) > 0
-            mock_qdrant_client.search.assert_called_once()
+            mock_qdrant_client.query_points.assert_called_once()
     
     def test_search_qdrant_invalid_collection(self, mock_qdrant_client, mock_config):
         """Verify error handling for non-existent collection."""
@@ -60,8 +66,8 @@ class TestSearchQdrant:
             with pytest.raises(Exception, match="Collection not found"):
                 search_qdrant("invalid_collection", "query")
     
-    def test_search_qdrant_read_only_uses_search_not_upsert(self, mock_qdrant_client, mock_config):
-        """Verify read-only safety: uses search() not upsert()."""
+    def test_search_qdrant_read_only_uses_query_points_not_upsert(self, mock_qdrant_client, mock_config):
+        """Verify read-only safety: uses query_points() not upsert()."""
         with patch('mcp_server.server._load_config', return_value=mock_config), \
              patch('mcp_server.server._create_qdrant_client', return_value=mock_qdrant_client), \
              patch('mcp_server.server._create_embedding_service'):
@@ -69,8 +75,8 @@ class TestSearchQdrant:
             
             search_qdrant("test_collection", "query")
             
-            # Should call search, not upsert
-            mock_qdrant_client.search.assert_called()
+            # Should call query_points, not upsert
+            mock_qdrant_client.query_points.assert_called()
             assert not mock_qdrant_client.upsert.called
 
 
@@ -136,6 +142,21 @@ class TestGetSearchContext:
             # Should call find_resources, not add_resource
             mock_ov_client.find_resources.assert_called()
             assert not mock_ov_client.add_resource.called
+    
+    def test_get_search_context_logs_errors(self, mock_ov_client):
+        """Verify that errors are logged before returning empty list."""
+        mock_ov_client.find_resources.side_effect = RuntimeError("OV connection failed")
+        
+        with patch('mcp_server.server._create_ov_client', return_value=mock_ov_client), \
+             patch('mcp_server.server.logger') as mock_logger:
+            from mcp_server.server import get_search_context
+            
+            result = get_search_context("qdrant_id_123", tier="L1")
+            
+            # Should return empty list on error
+            assert result == []
+            # Should log the error
+            mock_logger.error.assert_called()
 
 
 class TestExpandContext:
@@ -150,15 +171,16 @@ class TestExpandContext:
     
     @pytest.fixture
     def mock_sqlite_conn(self):
-        """Mock SQLite connection."""
+        """Mock SQLite connection with file_path-based hierarchy data."""
         conn = MagicMock()
         cursor = MagicMock()
         
-        # Mock parent query result
-        cursor.fetchone.return_value = ("parent_qdrant_id",)
+        # fetchone: resolve URI to file_path
+        cursor.fetchone.return_value = ("src/test.py",)
+        # fetchall: parent/child results return (qdrant_id, ov_resource_id)
         cursor.fetchall.return_value = [
-            ("child_qdrant_id_1",),
-            ("child_qdrant_id_2",)
+            ("qdrant_id_1", "file:///src/utils.py"),
+            ("qdrant_id_2", "file:///src/module.py"),
         ]
         
         conn.cursor.return_value = cursor
@@ -211,6 +233,36 @@ class TestExpandContext:
             for call in cursor.execute.call_args_list:
                 query = call[0][0].strip().upper() if call[0] else ""
                 assert query.startswith("SELECT") or query.startswith("WITH")
+    
+    def test_expand_context_uses_file_path_hierarchy_for_parents(self, mock_sqlite_conn, mock_config):
+        """Verify parent lookup uses LIKE prefix match on file_path column."""
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import expand_context
+            
+            expand_context("file:///src/sub/module.py", direction="parent")
+            
+            cursor = mock_sqlite_conn.cursor.return_value
+            sql_queries = [call[0][0].lower() for call in cursor.execute.call_args_list]
+            
+            # Should use LIKE for hierarchical parent match on file_path
+            assert any("like" in q and "file_path" in q for q in sql_queries), \
+                f"Expected parent lookup to use LIKE on file_path, got: {sql_queries}"
+    
+    def test_expand_context_uses_file_path_hierarchy_for_children(self, mock_sqlite_conn, mock_config):
+        """Verify children lookup uses LIKE prefix match on file_path column."""
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import expand_context
+            
+            expand_context("file:///src", direction="child")
+            
+            cursor = mock_sqlite_conn.cursor.return_value
+            sql_queries = [call[0][0].lower() for call in cursor.execute.call_args_list]
+            
+            # Should use LIKE for hierarchical children match on file_path
+            assert any("like" in q and "file_path" in q for q in sql_queries), \
+                f"Expected children lookup to use LIKE on file_path, got: {sql_queries}"
 
 
 class TestFindByStructure:
@@ -294,6 +346,22 @@ class TestFindByStructure:
             for call in cursor.execute.call_args_list:
                 query = call[0][0].strip().upper() if call[0] else ""
                 assert query.startswith("SELECT")
+    
+    def test_find_by_structure_uses_created_at_column(self, mock_sqlite_conn, mock_config):
+        """Verify SQL query uses correct column name: created_at (not indexed_at)."""
+        with patch('mcp_server.server._load_config', return_value=mock_config), \
+             patch('mcp_server.server.sqlite3.connect', return_value=mock_sqlite_conn):
+            from mcp_server.server import find_by_structure
+            
+            find_by_structure("src/*.py")
+            
+            cursor = mock_sqlite_conn.cursor.return_value
+            assert cursor.execute.called
+            
+            # Verify the SQL query uses 'created_at' column
+            sql_query = cursor.execute.call_args_list[0][0][0]
+            assert "created_at" in sql_query.lower()
+            assert "indexed_at" not in sql_query.lower()
 
 
 class TestConfigurationValidation:
