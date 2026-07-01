@@ -159,3 +159,8 @@ projects.json
 .DS_Store
 Thumbs.db
 qdrant_index.toml
+
+# Local runtime data
+openviking_data/
+.qwen/
+projects copy.json

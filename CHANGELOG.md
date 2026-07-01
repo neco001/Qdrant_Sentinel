@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## SOS Sync - 2026-07-01 12:54:37
+
+## [2026-07-01 11:36:22] 8f6a3f0b-ec45-422d-84d6-3d93834c2e5e
+
+**Advice**: Audit `SyncHTTPClient` and `SyncOpenViking` to ensure they share an identical method signature for the core 80% of operations used by `OpenVikingClient`. If `SyncHTTPClient` is missing methods, implement stubs or raise `NotImplementedError` with clear messages. This prevents runtime AttributeErrors during the fallback switch.
+
+---
+
 ## SOS Sync - 2026-07-01 11:57:06
 
 ## [2026-07-01 11:36:22] 8f6a3f0b-ec45-422d-84d6-3d93834c2e5e

@@ -129,18 +129,30 @@ class OpenVikingClient:
         # 1. Try to connect to a running HTTP server first to avoid LOCK conflicts
         if SyncHTTPClient is not None:
             from urllib.parse import urlparse
+            import time
             try:
                 parsed = urlparse(self.url)
                 host = parsed.hostname or '127.0.0.1'
                 port = parsed.port or 1933
                 
-                if is_http_server_alive(host=host, port=port):
-                    self._client = SyncHTTPClient(url=self.url)
-                    self._is_http_client = True
-                    logger.info(f"OpenVikingClient connected to HTTP server at {self.url}")
-                    return
-                else:
-                    logger.debug(f"HTTP server check at {self.url} failed. Falling back to native/embedded.")
+                # If running as a daemon service (e.g., via PM2 with OPEN_VIKING_ENABLED='true'),
+                # wait for the HTTP server to start up instead of falling back to embedded mode immediately.
+                # This prevents startup race conditions where Sentinel locks the database before the server starts.
+                is_daemon = os.getenv("OPEN_VIKING_ENABLED") == "true"
+                max_retries = 20 if is_daemon else 1
+                retry_interval = 0.5
+                
+                for attempt in range(max_retries):
+                    if is_http_server_alive(host=host, port=port):
+                        self._client = SyncHTTPClient(url=self.url)
+                        self._is_http_client = True
+                        logger.info(f"OpenVikingClient connected to HTTP server at {self.url} (attempt {attempt + 1})")
+                        return
+                    if is_daemon and attempt < max_retries - 1:
+                        logger.info(f"Waiting for OpenViking HTTP server at {self.url} to start... (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(retry_interval)
+                
+                logger.debug(f"HTTP server check at {self.url} failed. Falling back to native/embedded.")
             except Exception as http_err:
                 logger.debug(f"HTTP server check/connection failed: {http_err}. Falling back to native/embedded.")
 
