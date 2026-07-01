@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## SOS Sync - 2026-07-01 11:57:06
+
+## [2026-07-01 11:36:22] 8f6a3f0b-ec45-422d-84d6-3d93834c2e5e
+
+**Advice**: Audit `SyncHTTPClient` and `SyncOpenViking` to ensure they share an identical method signature for the core 80% of operations used by `OpenVikingClient`. If `SyncHTTPClient` is missing methods, implement stubs or raise `NotImplementedError` with clear messages. This prevents runtime AttributeErrors during the fallback switch.
+
+---
+
+## [2026-07-01 11:36:22] 3188d81f-e95c-4f8a-b875-145ae6230f43
+
+**Advice**: Run the OpenViking server in the background. Start a separate Python process instantiating `OpenVikingClient`. Perform a write operation. Verify that no 'database is locked' error occurs and that the data is persisted via the HTTP server. Stop the server and verify the client falls back to embedded mode automatically.
+
+---
+
 ## SOS Sync - 2026-06-29 21:47:12
 
 ## [2026-06-29 21:43:06] 5beed494-fef8-49dd-84aa-6be7ebbd0c13
