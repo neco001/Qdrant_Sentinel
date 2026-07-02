@@ -100,7 +100,7 @@ Sign up at [Qdrant Cloud](https://cloud.qdrant.io/) and get your Cluster URL and
 - **Compensating Transactions**: If OpenViking fails after Qdrant upsert, automatically rolls back Qdrant point to maintain data consistency.
 - **Structured Logging**: Comprehensive logging with structured JSON format for easy integration with log aggregators (ELK, Splunk, etc.).
 - **Built-in Metrics**: In-memory metrics collector tracking dual-write success rates, OpenViking failures, and rollback counts.
-- **Health Checks**: Built-in `qdrant-index health` command for operational monitoring and alerting.
+- **Status Reporting**: Programmatic status reporting comparing Qdrant points and OpenViking mappings.
 - **SQLite Optimization**: WAL mode enabled for better concurrency, with optimized indexes on frequently queried columns.
 
 ---
@@ -178,37 +178,26 @@ uv run qdrant-sentinel
 pm2 start ecosystem.config.js
 ```
 
-### Health Check
+### Status Reporting
 
-Check the operational status of the Sentinel:
+You can generate a comprehensive status report comparing Qdrant points and OpenViking mappings programmatically:
 
-```bash
-uv run qdrant-index health
+```python
+from sentinel import get_status_report, get_qdrant_client, get_db_connection
+
+qdrant = get_qdrant_client()
+conn = get_db_connection()
+report = get_status_report(qdrant, conn)
+print(report)
 ```
 
-Returns JSON output:
+Returns a status dictionary:
 ```json
 {
-  "status": "healthy",
-  "qdrant": {
-    "status": "connected",
-    "url": "http://127.0.0.1:6333",
-    "collections": 3
-  },
-  "openviking": {
-    "status": "available",
-    "cli_path": "ov"
-  },
-  "sqlite": {
-    "status": "ok",
-    "path": "/path/to/sentinel_state.db",
-    "mappings_count": 1234
-  },
-  "metrics": {
-    "successful_dual_writes": 4567,
-    "openviking_failures": 12,
-    "qdrant_rollbacks": 3
-  }
+  "total_qdrant_points": 100,
+  "total_ov_resources": 80,
+  "mapped_count": 75,
+  "unmapped_qdrant_count": 25
 }
 ```
 
