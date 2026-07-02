@@ -122,11 +122,11 @@ def reset_state():
     _STATE_DB_PATH = None
 
 
-def search_qdrant(collection_name: str, query_text: str, limit: int = 5) -> List[Dict[str, Any]]:
+def search_qdrant(collection_name: Optional[str] = None, query_text: str = "", limit: int = 5) -> List[Dict[str, Any]]:
     """Perform semantic search on Qdrant collection.
     
     Args:
-        collection_name: Name of the Qdrant collection to search
+        collection_name: Name of the Qdrant collection to search. If None, uses first collection from config.
         query_text: Text query for semantic search
         limit: Maximum number of results to return (default: 5)
     
@@ -134,6 +134,7 @@ def search_qdrant(collection_name: str, query_text: str, limit: int = 5) -> List
         List of search results with score, id, and payload
     
     Raises:
+        ValueError: If collection_name is None and no collections are configured
         Exception: If collection doesn't exist or connection fails
     """
     # Validate configuration
@@ -142,6 +143,12 @@ def search_qdrant(collection_name: str, query_text: str, limit: int = 5) -> List
         raise AttributeError("Qdrant configuration missing")
     if not hasattr(config, 'embeddings'):
         raise AttributeError("Embeddings configuration missing")
+    
+    # Resolve default collection if None
+    if collection_name is None:
+        if not config.qdrant.collections:
+            raise ValueError("No collections configured in qdrant_index.toml")
+        collection_name = config.qdrant.collections[0]
     
     # Get clients
     qdrant_client = _get_qdrant_client()

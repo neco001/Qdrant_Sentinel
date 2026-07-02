@@ -1,8 +1,8 @@
 # shared_config.py
 import os
 import tomli
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List
 from pathlib import Path
 
 class ConfigurationError(Exception):
@@ -12,6 +12,7 @@ class ConfigurationError(Exception):
 @dataclass
 class QdrantConfig:
     url: str
+    collections: List[str] = field(default_factory=list)
 
 @dataclass
 class EmbeddingsConfig:
@@ -77,7 +78,10 @@ def load_config(project_root: Optional[str] = None) -> AppConfig:
     # Validate and extract Qdrant config
     try:
         qdrant_section = data["qdrant"]
-        qdrant = QdrantConfig(url=qdrant_section["url"])
+        qdrant = QdrantConfig(
+            url=qdrant_section["url"],
+            collections=qdrant_section.get("collections", [])
+        )
     except KeyError as e:
         raise ConfigurationError(f"Missing required key in [qdrant] section: {e}")
 

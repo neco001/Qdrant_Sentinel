@@ -74,7 +74,7 @@ def create_server() -> Server:
                     "properties": {
                         "collection_name": {
                             "type": "string",
-                            "description": "Name of the Qdrant collection to search"
+                            "description": "Name of the Qdrant collection to search. Optional - uses default collection from qdrant_index.toml if not provided."
                         },
                         "query_text": {
                             "type": "string",
@@ -86,7 +86,7 @@ def create_server() -> Server:
                             "default": 5
                         }
                     },
-                    "required": ["collection_name", "query_text"]
+                    "required": ["query_text"]
                 }
             ),
             Tool(
@@ -150,7 +150,7 @@ def create_server() -> Server:
         """Route tool calls to appropriate handler."""
         if name == "search_qdrant":
             return search_qdrant(
-                collection_name=arguments["collection_name"],
+                collection_name=arguments.get("collection_name"),
                 query_text=arguments["query_text"],
                 limit=arguments.get("limit", 5)
             )
